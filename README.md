@@ -1,2 +1,3 @@
-# blockbench-mod-manager
-A unified plugin monkey-patch mod manager
+# blockbench-patch-manager
+
+A unified Blockbench plugin monkey-patch manager
