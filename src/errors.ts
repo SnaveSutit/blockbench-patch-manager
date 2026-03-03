@@ -1,11 +1,11 @@
-export class ModInstallError extends Error {
+export class PatchApplyError extends Error {
 	constructor(id: string, err: Error) {
-		super(`'${id}' failed to install: ${err.message}` + (err.stack ? '\n' + err.stack : ''))
+		super(`'${id}' failed to apply: ${err.message}` + (err.stack ? '\n' + err.stack : ''))
 	}
 }
 
-export class ModUninstallError extends Error {
+export class PatchRevertError extends Error {
 	constructor(id: string, err: Error) {
-		super(`'${id}' failed to uninstall: ${err.message}` + (err.stack ? '\n' + err.stack : ''))
+		super(`'${id}' failed to revert: ${err.message}` + (err.stack ? '\n' + err.stack : ''))
 	}
 }

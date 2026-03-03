@@ -1,61 +1,67 @@
 import subscribable, { Subscribable } from 'simple-subpub'
-import { ModInstallError, ModUninstallError } from './errors'
-import { updateModInstallOrder, validateModId } from './manager'
+import { PatchApplyError, PatchRevertError } from './errors'
+import { updatePatchApplicationOrder, validatePatchId } from './manager'
 
-export interface ModHandle {
+export interface PatchHandle {
 	id: string
 	dependencies?: string[]
 	priority: number
 	enabled: boolean
 	isInstalled(): boolean
-	install: () => Promise<void>
-	uninstall: () => Promise<void>
+	apply: () => Promise<void>
+	revert: () => Promise<void>
 }
 
-export interface BaseModOptions {
+export interface BasePatchOptions {
 	/**
-	 * The unique identifier for the mod. E.g: 'animated-java:example_mod'
+	 * The unique identifier for the patch. E.g: 'animated-java:example_patch'
 	 * The namespace MUST match your plugin's ID.
 	 */
 	id: string
-	/** A list of mod IDs that this mod depends on */
+	/**
+	 * A list of patch IDs that this patch depends on.
+	 * - If any of these patches are not installed, this patch will not be installed either.
+	 * - All of these patches will be installed before this patch, regardless of their priority.
+	 */
 	dependencies?: string[]
-	/** The priority of the mod. Higher priority mods will be installed first. */
+	/** The priority of the patch. Higher priority patches will be installed first. */
 	priority?: number
 }
 
-interface ModOptions<RevertContext extends any | void> extends BaseModOptions {
-	/** A function that applies the mod. This function should return a context object that will be passed to the revert function. */
+interface PatchOptions<RevertContext extends any | void> extends BasePatchOptions {
+	/** A function that applies the patch. This function should return a context object that will be passed to the revert function. */
 	apply: () => Promise<RevertContext> | RevertContext
 	/**
-	 * A function that reverts the mod
+	 * A function that reverts the patch
 	 * @param ctx The context object returned by the apply function
 	 */
 	revert: (ctx: RevertContext) => Promise<void> | void
 }
 
 /**
- * Registers a new mod. Mods are changes that need to be applied when the plugin is loaded, and reverted when the plugin is unloaded.
+ * Registers a new patch. Patches are changes that need to be applied when the plugin is loaded, and reverted when the plugin is unloaded.
  *
- * Mods can depend on other mods, and will be installed in the correct order.
+ * Patches can depend on other patches, and will be installed in the correct order.
  *
- * If a mod fails to install, an error will be thrown, and the plugin will fail to load.
+ * If a patch fails to install, an error will be thrown, and the plugin will fail to load.
  */
-export function registerMod<RevertContext extends any | void>(options: ModOptions<RevertContext>) {
-	if (!validateModId(options.id)) {
+export function registerPatch<RevertContext extends any | void>(
+	options: PatchOptions<RevertContext>
+) {
+	if (!validatePatchId(options.id)) {
 		throw new Error(
-			`Failed to register mod with invalid ID '${options.id}'. See previous warnings for more details.`
+			`Failed to register patch with invalid ID '${options.id}'. See previous warnings for more details.`
 		)
 	}
 
 	let applyContext: RevertContext
 	let installed = false
 
-	if (BlockbenchModManager.registered.has(options.id)) {
-		throw new Error(`A Mod with the ID '${options.id}' is already registered!`)
+	if (BlockbenchPatchManager.registered.has(options.id)) {
+		throw new Error(`A Patch with the ID '${options.id}' is already registered!`)
 	}
 
-	const handle: ModHandle = {
+	const handle: PatchHandle = {
 		id: options.id,
 		dependencies: options.dependencies,
 		priority: options.priority ?? 0,
@@ -65,141 +71,139 @@ export function registerMod<RevertContext extends any | void>(options: ModOption
 			return installed
 		},
 
-		async install() {
+		async apply() {
 			if (!this.enabled) return
 			console.log(`Installing '${options.id}'`)
 			try {
 				if (installed)
 					throw new Error(
-						`Attempted to install '${options.id}' while it was already installed.`
+						`Attempted to apply '${options.id}' while it was already applied.`
 					)
 				applyContext = await options.apply()
 				installed = true
 			} catch (err) {
 				debugger
-				throw new ModInstallError(options.id, err as Error)
+				throw new PatchApplyError(options.id, err as Error)
 			}
 		},
 
-		async uninstall() {
+		async revert() {
 			if (!this.enabled && !installed) return
-			console.log(`Uninstalling '${options.id}'`)
+			console.log(`Reverting '${options.id}'`)
 			try {
 				if (!installed)
-					throw new Error(
-						`Attempted to uninstall '${options.id}' before it was installed.`
-					)
+					throw new Error(`Attempted to revert '${options.id}' before it was applied.`)
 				await options.revert(applyContext)
 				installed = false
 			} catch (err) {
 				debugger
-				throw new ModUninstallError(options.id, err as Error)
+				throw new PatchRevertError(options.id, err as Error)
 			}
 		},
 	}
 
-	BlockbenchModManager.registered.set(options.id, handle)
-	BlockbenchModManager.installOrder.push(options.id)
-	updateModInstallOrder()
+	BlockbenchPatchManager.registered.set(options.id, handle)
+	BlockbenchPatchManager.installOrder.push(options.id)
+	updatePatchApplicationOrder()
 
 	return handle
 }
 
-interface RegisterProjectModOptions<
+interface RegisterProjectPatchOptions<
 	RevertContext extends any | void,
-> extends ModOptions<RevertContext> {
-	/** A function that checks if the mod should be applied when switching projects */
+> extends PatchOptions<RevertContext> {
+	/** A function that checks if the patch should be applied when switching projects */
 	condition: ConditionResolvable<{ project: ModelProject }>
 	apply: () => RevertContext
 	revert: (ctx: RevertContext) => void
 	/**
-	 * If true, the mod will be reverted (and re-applied) when switching to a different project, even if the new project also meets the condition for applying the mod.
+	 * If true, the patch will be reverted (and re-applied) when switching to a different project, even if the new project also meets the condition for applying the patch.
 	 */
 	alwaysRevertOnProjectChange?: boolean
 }
 
 /**
- * Registers a mod that is only applied when a project is selected that meets the provided condition.
+ * Registers a patch that is only applied when a project is selected that meets the provided condition.
  *
- * Used to apply mods that are specific to a custom model format.
+ * Used to apply patches that are specific to a custom model format.
  *
- * NOTE: The `apply` and `revert` functions of this mod are not awaited.
+ * NOTE: The `apply` and `revert` functions of this patch are not awaited.
  */
-export function registerProjectMod<RevertContext extends any | void>(
-	options: RegisterProjectModOptions<RevertContext>
+export function registerProjectPatch<RevertContext extends any | void>(
+	options: RegisterProjectPatchOptions<RevertContext>
 ) {
 	let revertContext: RevertContext | null = null
 	// eslint-disable-next-line prefer-const
-	let modHandle: ModHandle
+	let patchHandle: PatchHandle
 	options.alwaysRevertOnProjectChange ??= false
 
 	const onPreSelectProject = (project: ModelProject) => {
-		if (modHandle.isInstalled()) return
+		if (patchHandle.isInstalled()) return
 		if (!Condition(options.condition, { project })) return
-		console.log(`Applying project mod '${options.id}'`)
+		console.log(`Applying project patch '${options.id}'`)
 		revertContext = options.apply()
 	}
 
 	const onUnselectProject = () => {
-		if (!modHandle.isInstalled()) return
-		console.log(`Reverting project mod '${options.id}'`)
+		if (!patchHandle.isInstalled()) return
+		console.log(`Reverting project patch '${options.id}'`)
 		options.revert(revertContext!)
 		revertContext = null
 	}
 
-	modHandle = registerMod({
+	patchHandle = registerPatch({
 		...options,
 
 		apply: () => {
-			Blockbench.on('blockbench-mod-manager:pre_select_project', onPreSelectProject)
+			Blockbench.on('blockbench-patch-manager:pre_select_project', onPreSelectProject)
 			Blockbench.on('unselect_project', onUnselectProject)
 		},
 
 		revert: () => {
 			Blockbench.removeListener(
-				'blockbench-mod-manager:pre_select_project',
+				'blockbench-patch-manager:pre_select_project',
 				onPreSelectProject
 			)
 			Blockbench.removeListener('unselect_project', onUnselectProject)
 		},
 	})
 
-	return modHandle
+	return patchHandle
 }
 
-interface RegisterPluginModOptions<
+interface RegisterPluginPatchOptions<
 	RevertContext extends any | void,
-> extends ModOptions<RevertContext> {
+> extends PatchOptions<RevertContext> {
 	apply: () => RevertContext
 	revert: (ctx: RevertContext) => void
-	/** A function that checks if the mod should be applied when the plugin is loaded */
+	/** A function that checks if the patch should be applied when the plugin is loaded */
 	condition: (plugin: BBPlugin) => boolean
 }
 
 /**
- * Registers a mod that is applied / reverted when a plugin is loaded / unloaded that meets the provided condition.
+ * Registers a patch that is applied / reverted when a plugin is loaded / unloaded that meets the provided condition.
  */
-export function registerPluginMod<RevertContext extends any | void>(
-	options: RegisterPluginModOptions<RevertContext>
+export function registerPluginPatch<RevertContext extends any | void>(
+	options: RegisterPluginPatchOptions<RevertContext>
 ) {
 	let revertContext: RevertContext | undefined
 
 	const onLoadedPlugin = ({ plugin }: { plugin: BBPlugin }) => {
 		if (!Condition(options.condition, plugin)) return
-		console.log(`Applying plugin mod '${options.id}'`)
+		console.log(`Applying plugin patch '${options.id}'`)
 		revertContext = options.apply()
 	}
 
 	const onUnloadedPlugin = () => {
-		// Effectively using revertContext as a boolean to check if the mod is applied
+		// Effectively using revertContext as a boolean to check if the patch is applied
 		if (revertContext !== undefined) {
-			console.log(`Reverting plugin mod '${options.id}'`)
+			console.log(`Reverting plugin patch '${options.id}'`)
 			options.revert(revertContext)
 			revertContext = undefined
 		}
 	}
 
-	return registerMod({
+	return registerPatch({
 		...options,
 
 		apply: () => {
@@ -224,14 +228,14 @@ interface DeletableEventHandler<T> {
 	onDeleted: Subscribable<T>['subscribe']
 }
 
-interface RegisterDeletableOptions<T extends Deletable> extends BaseModOptions {
+interface RegisterDeletableOptions<T extends Deletable> extends BasePatchOptions {
 	create: () => T
 }
 
 /**
- * Registers a mod that handles the creation and deletion of a {@link Deletable} object on plugin load and unload.
+ * Registers a patch that handles the creation and deletion of a {@link Deletable} object on plugin load and unload.
  */
-export function registerDeletableHandlerMod<T extends Deletable>(
+export function registerDeletableHandlerPatch<T extends Deletable>(
 	options: RegisterDeletableOptions<T>
 ): DeletableEventHandler<T> {
 	let instance: T | null = null
@@ -244,7 +248,7 @@ export function registerDeletableHandlerMod<T extends Deletable>(
 		onDeleted: deleted.subscribe,
 	}
 
-	registerMod({
+	registerPatch({
 		...options,
 
 		apply: () => {
@@ -263,11 +267,11 @@ export function registerDeletableHandlerMod<T extends Deletable>(
 	return handle
 }
 
-interface PropertyOverrideModOptions<
+interface PropertyOverridePatchOptions<
 	Target extends Object,
 	Key extends keyof Target,
 	Value extends Target[Key],
-> extends BaseModOptions {
+> extends BasePatchOptions {
 	target: Target
 	key: Key
 	/**
@@ -295,19 +299,21 @@ interface PropertyOverrideModOptions<
 }
 
 /**
- * Registers a mod that allows modifying the getter and setters of a property.
- * The original property descriptor is restored when the mod is uninstalled.
+ * Registers a patch that allows modifying the getter and setters of a property.
+ * The original property descriptor is restored when the patch is uninstalled.
  */
-export function registerPropertyOverrideMod<
+export function registerPropertyOverridePatch<
 	Target extends Object,
 	Key extends keyof Target,
 	Value extends Target[Key],
->(options: PropertyOverrideModOptions<Target, Key, Value>) {
+>(options: PropertyOverridePatchOptions<Target, Key, Value>) {
 	if (!options.get && !options.set) {
-		throw new Error(`At least one of 'get' or 'set' must be provided in a PropertyOverrideMod.`)
+		throw new Error(
+			`At least one of 'get' or 'set' must be provided in a PropertyOverridePatch.`
+		)
 	}
 
-	registerMod({
+	registerPatch({
 		...options,
 
 		apply: () => {

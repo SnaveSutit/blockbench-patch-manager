@@ -24,14 +24,6 @@
 		".": {
 			"default": "./dist/index.js",
 			"types": "./dist/index.d.ts"
-		},
-		"./esbuildPlugin": {
-			"default": "./dist/esbuildPlugin.js",
-			"types": "./dist/esbuildPlugin.d.ts"
-		},
-		"./blockbench": {
-			"default": "./dist/blockbench/index.js",
-			"types": "./dist/blockbench/index.d.ts"
 		}
 	},
 	"peerDependencies": {
