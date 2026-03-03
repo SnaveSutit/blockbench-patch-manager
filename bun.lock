@@ -6,7 +6,7 @@
       "name": "blockbench-mod-manager",
       "dependencies": {
         "blockbench-types": "^5.0.6",
-        "simple-subpub": "^1.0.2",
+        "simple-subpub": "^1.2.0",
         "svelte": "^5.46.3",
         "svelte-observable-store": "^1.0.1",
         "svelte-preprocess": "^6.0.3",
@@ -442,7 +442,7 @@
 
     "shebang-regex": ["shebang-regex@3.0.0", "", {}, "sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A=="],
 
-    "simple-subpub": ["simple-subpub@1.0.2", "", {}, "sha512-sryJ7xXoE/uW0yxayFb4e13mxjPZFiGivyexUbpYgIHbNNUPlEPtZDE54kB0BmTcPCOrXGgKemy3f1GJW+WZog=="],
+    "simple-subpub": ["simple-subpub@1.2.0", "", {}, "sha512-cN0RBYgIydi0X+3oDYaEMY7/IfdopJjJZriLxXIiHDdsKW3eSVxDpyojAyBY5wWw0P8Z0NLOP93h0kCaeT/TuA=="],
 
     "source-map": ["source-map@0.6.1", "", {}, "sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g=="],
 
