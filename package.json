@@ -1,0 +1,58 @@
+{
+	"name": "blockbench-mod-manager",
+	"version": "1.0.0",
+	"author": {
+		"name": "SnaveSutit",
+		"email": "snavesutit@gmail.com",
+		"url": "https://snavesutit.github.io"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/SnaveSutit/svelte-patching-tools"
+	},
+	"files": [
+		"dist"
+	],
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"scripts": {
+		"build": "tsc",
+		"dev": "tsc --watch",
+		"prepublishOnly": "bun run build"
+	},
+	"exports": {
+		".": {
+			"default": "./dist/index.js",
+			"types": "./dist/index.d.ts"
+		},
+		"./esbuildPlugin": {
+			"default": "./dist/esbuildPlugin.js",
+			"types": "./dist/esbuildPlugin.d.ts"
+		},
+		"./blockbench": {
+			"default": "./dist/blockbench/index.js",
+			"types": "./dist/blockbench/index.d.ts"
+		}
+	},
+	"peerDependencies": {
+		"typescript": "^5"
+	},
+	"dependencies": {
+		"blockbench-types": "^5.0.6",
+		"simple-subpub": "^1.0.2",
+		"svelte": "^5.46.3",
+		"svelte-observable-store": "^1.0.1",
+		"svelte-preprocess": "^6.0.3",
+		"svelte-preprocess-esbuild": "^3.0.1"
+	},
+	"devDependencies": {
+		"@types/node": "^25.0.8",
+		"esbuild": "^0.27.2",
+		"eslint-plugin-check-file": "^3.3.1",
+		"eslint-plugin-svelte": "^3.14.0",
+		"jiti": "^2.6.1",
+		"svelte-eslint-parser": "^1.4.1",
+		"typescript": "^5.9.3",
+		"typescript-eslint": "^8.53.0"
+	}
+}
