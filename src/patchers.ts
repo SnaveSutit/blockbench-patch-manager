@@ -133,25 +133,29 @@ export function registerProjectPatch<RevertContext extends any | void>(
 	options: RegisterProjectPatchOptions<RevertContext>
 ) {
 	let revertContext: RevertContext | null = null
-	// eslint-disable-next-line prefer-const
-	let patchHandle: PatchHandle
+	let parentPatchHandle: PatchHandle
 	options.alwaysRevertOnProjectChange ??= false
 
+	let isApplied = false
+
 	const onPreSelectProject = (project: ModelProject) => {
-		if (patchHandle.isInstalled()) return
+		if (isApplied) return
 		if (!Condition(options.condition, { project })) return
 		console.log(`Applying project patch '${options.id}'`)
 		revertContext = options.apply()
+		isApplied = true
 	}
 
 	const onUnselectProject = () => {
-		if (!patchHandle.isInstalled()) return
+		if (!isApplied) return
 		console.log(`Reverting project patch '${options.id}'`)
 		options.revert(revertContext!)
 		revertContext = null
+		isApplied = false
 	}
 
-	patchHandle = registerPatch({
+	// eslint-disable-next-line prefer-const
+	parentPatchHandle = registerPatch({
 		...options,
 
 		apply: () => {
@@ -168,7 +172,7 @@ export function registerProjectPatch<RevertContext extends any | void>(
 		},
 	})
 
-	return patchHandle
+	return parentPatchHandle
 }
 
 interface RegisterPluginPatchOptions<

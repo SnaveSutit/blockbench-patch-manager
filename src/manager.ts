@@ -104,6 +104,7 @@ export function getPatchOwner(modId: string) {
 
 export function validatePatchId(patchId: string) {
 	const [namespace] = patchId.split(':')
+	if (namespace === 'blockbench-patch-manager') return true
 	const plugin = Plugins.installed.find(p => p.id === namespace)
 	if (!plugin) {
 		console.error(
