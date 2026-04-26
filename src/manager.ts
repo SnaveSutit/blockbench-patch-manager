@@ -80,7 +80,7 @@ async function updatePatches() {
 		console.log('%cInstalling enabled patches...', 'color: green; font-weight: bold;')
 		for (const patchId of BlockbenchPatchManager.installOrder) {
 			const patch = BlockbenchPatchManager.registered.get(patchId)!
-			if (!patch.isInstalled()) {
+			if (!patch.isInstalled() && patch.enabled) {
 				if (!checkPatchDependencies(patch)) {
 					console.warn(`Skipping patch '${patch.id}' due to missing dependencies.`)
 					continue
@@ -99,13 +99,13 @@ async function updatePatches() {
 
 export function getPatchOwner(modId: string) {
 	const [namespace] = modId.split(':')
-	return Plugins.installed.find(p => p.id === namespace)
+	return Plugins.registered[namespace]
 }
 
 export function validatePatchId(patchId: string) {
 	const [namespace] = patchId.split(':')
 	if (namespace === 'blockbench-patch-manager') return true
-	const plugin = Plugins.installed.find(p => p.id === namespace)
+	const plugin = Plugins.registered[namespace]
 	if (!plugin) {
 		console.error(
 			`Patch '${patchId}' depends on an unknown plugin '${namespace}' which is not installed.`
