@@ -1,6 +1,7 @@
 import subscribable, { Subscribable } from 'simple-subpub'
 import { PatchApplyError, PatchRevertError } from './errors'
 import { updatePatchApplicationOrder, validatePatchId } from './manager'
+import { prettyLog } from './log'
 
 export interface PatchHandle {
 	id: string
@@ -73,7 +74,7 @@ export function registerPatch<RevertContext extends any | void>(
 
 		async apply() {
 			if (!this.enabled) return
-			console.log(`Installing '${options.id}'`)
+			prettyLog({ 'Applying ': 'color: #55ff55;', [options.id]: 'color: #ffff55;' })
 			try {
 				if (installed)
 					throw new Error(
@@ -89,7 +90,7 @@ export function registerPatch<RevertContext extends any | void>(
 
 		async revert() {
 			if (!this.enabled && !installed) return
-			console.log(`Reverting '${options.id}'`)
+			prettyLog({ 'Reverting ': 'color: #ff5555;', [options.id]: 'color: #ffff55;' })
 			try {
 				if (!installed)
 					throw new Error(`Attempted to revert '${options.id}' before it was applied.`)
@@ -141,14 +142,17 @@ export function registerProjectPatch<RevertContext extends any | void>(
 	const onPreSelectProject = (project: ModelProject) => {
 		if (isApplied) return
 		if (!Condition(options.condition, { project })) return
-		console.log(`Applying project patch '${options.id}'`)
+		prettyLog({ 'Applying project patch ': 'color: #55ff55;', [options.id]: 'color: #ffff55;' })
 		revertContext = options.apply()
 		isApplied = true
 	}
 
 	const onUnselectProject = () => {
 		if (!isApplied) return
-		console.log(`Reverting project patch '${options.id}'`)
+		prettyLog({
+			'Reverting project patch ': 'color: #ff5555;',
+			[options.id]: 'color: #ffff55;',
+		})
 		options.revert(revertContext!)
 		revertContext = null
 		isApplied = false
@@ -194,14 +198,17 @@ export function registerPluginPatch<RevertContext extends any | void>(
 
 	const onLoadedPlugin = ({ plugin }: { plugin: BBPlugin }) => {
 		if (!Condition(options.condition, plugin)) return
-		console.log(`Applying plugin patch '${options.id}'`)
+		prettyLog({ 'Applying plugin patch ': 'color: #55ff55;', [options.id]: 'color: #ffff55;' })
 		revertContext = options.apply()
 	}
 
 	const onUnloadedPlugin = () => {
 		// Effectively using revertContext as a boolean to check if the patch is applied
 		if (revertContext !== undefined) {
-			console.log(`Reverting plugin patch '${options.id}'`)
+			prettyLog({
+				'Reverting plugin patch ': 'color: #ff5555;',
+				[options.id]: 'color: #ffff55;',
+			})
 			options.revert(revertContext)
 			revertContext = undefined
 		}

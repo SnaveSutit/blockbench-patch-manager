@@ -1,3 +1,4 @@
+import { prettyError, prettyGroupCollapsed, prettyLog, prettyWarn } from './log'
 import { PatchHandle } from './patchers'
 
 declare global {
@@ -33,10 +34,12 @@ function queuePatchUpdate() {
 }
 
 Blockbench.on('loaded_plugin', ({ plugin }) => {
+	prettyLog({ [`Plugin '${plugin.name}' loaded, enabling its patches...`]: '' })
 	setPluginPatchesEnabled(plugin, true)
 	queuePatchUpdate()
 })
 Blockbench.on('unloaded_plugin', ({ plugin }) => {
+	prettyLog({ [`Plugin '${plugin.name}' unloaded, disabling its patches...`]: '' })
 	setPluginPatchesEnabled(plugin, false)
 	queuePatchUpdate()
 })
@@ -46,7 +49,7 @@ function checkPatchDependencies(patch: PatchHandle) {
 	for (const dependencyId of patch.dependencies) {
 		const dependency = BlockbenchPatchManager.registered.get(dependencyId)
 		if (!dependency) {
-			console.warn(`Patch '${patch.id}' depends on unknown patch '${dependencyId}'.`)
+			prettyWarn({ [`Patch '${patch.id}' depends on unknown patch '${dependencyId}'.`]: '' })
 			return false
 		}
 		if (!dependency.isInstalled()) {
@@ -60,16 +63,17 @@ function checkPatchDependencies(patch: PatchHandle) {
 
 async function updatePatches() {
 	if (BlockbenchPatchManager.updatingPatches) {
-		console.warn(
-			`Attempted to update patches while patches are already being updated. Ignoring...`
-		)
+		prettyWarn({
+			[`Attempted to update patches while patches are already being updated. Ignoring...`]:
+				'',
+		})
 		return
 	}
 	BlockbenchPatchManager.updatingPatches = true
 
-	console.groupCollapsed(`Updating Patches...`)
+	prettyGroupCollapsed({ 'Updating Patches...': 'color: #aaaaaa;' })
 	try {
-		console.log('%cUninstalling all patches...', 'color: red; font-weight: bold;')
+		prettyLog({ 'Uninstalling patches...': 'color: #ff5555; font-weight: bold;' })
 		for (const patchId of BlockbenchPatchManager.installOrder.slice().reverse()) {
 			const patch = BlockbenchPatchManager.registered.get(patchId)!
 			if (patch.isInstalled()) {
@@ -77,12 +81,14 @@ async function updatePatches() {
 			}
 		}
 
-		console.log('%cInstalling enabled patches...', 'color: green; font-weight: bold;')
+		prettyLog({ 'Installing enabled patches...': 'color: #55ff55; font-weight: bold;' })
 		for (const patchId of BlockbenchPatchManager.installOrder) {
 			const patch = BlockbenchPatchManager.registered.get(patchId)!
 			if (!patch.isInstalled() && patch.enabled) {
 				if (!checkPatchDependencies(patch)) {
-					console.warn(`Skipping patch '${patch.id}' due to missing dependencies.`)
+					prettyWarn({
+						[`Skipping patch '${patch.id}' due to missing dependencies.`]: '',
+					})
 					continue
 				}
 				await patch.apply()
@@ -107,9 +113,10 @@ export function validatePatchId(patchId: string) {
 	if (namespace === 'blockbench-patch-manager') return true
 	const plugin = Plugins.registered[namespace]
 	if (!plugin) {
-		console.error(
-			`Patch '${patchId}' depends on an unknown plugin '${namespace}' which is not installed.`
-		)
+		prettyError({
+			[`Patch '${patchId}' depends on an unknown plugin '${namespace}' which is not installed.`]:
+				'',
+		})
 		return false
 	}
 	return true
