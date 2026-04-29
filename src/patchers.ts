@@ -332,7 +332,15 @@ export function registerPropertyOverridePatch<
 				throw new Error(`Cannot override property on undefined object.`)
 			}
 
-			let currentValue = options.target[options.key] as Value
+			let currentValue: Value
+			try {
+				currentValue = options.target[options.key] as Value
+			} catch {
+				throw new Error(
+					`Failed to get initial value of property '${String(options.key)}' for PropertyOverridePatch ${String(options.id)}.`
+				)
+			}
+
 			const originalDescriptor = Object.getOwnPropertyDescriptor(
 				options.target,
 				options.key
