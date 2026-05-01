@@ -83,7 +83,7 @@ export function registerPatch<RevertContext extends any | void>(
 				applyContext = await options.apply()
 				installed = true
 			} catch (err) {
-				debugger
+				debugger // Intentional debugger statement to make it easier to debug failed patches
 				throw new PatchApplyError(options.id, err as Error)
 			}
 		},
@@ -97,7 +97,7 @@ export function registerPatch<RevertContext extends any | void>(
 				await options.revert(applyContext)
 				installed = false
 			} catch (err) {
-				debugger
+				debugger // Intentional debugger statement to make it easier to debug failed patches
 				throw new PatchRevertError(options.id, err as Error)
 			}
 		},
