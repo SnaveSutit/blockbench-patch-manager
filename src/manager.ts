@@ -1,5 +1,7 @@
 import { prettyError, prettyGroupCollapsed, prettyLog, prettyWarn } from './log'
 import { PatchHandle, registerPropertyOverridePatch } from './patchers'
+import PACKAGE from '../package.json'
+/// <reference types="blockbench-types" />
 
 declare global {
 	interface BlockbenchEventMap {
@@ -12,24 +14,26 @@ declare global {
 	}
 }
 
-class PatchManager {
+class PatchManager implements Deletable {
+	static latestVersion = PACKAGE.version
+	version = PACKAGE.version
+
 	registered = new Map<string, PatchHandle>()
 	installOrder: string[] = []
-	updatingPatches = false
-	updateTimeout?: NodeJS.Timeout
+
+	static upgrade(oldManager: PatchManager) {
+		oldManager.delete()
+		const manager = new PatchManager()
+		manager.installOrder = [...oldManager.installOrder]
+		for (const [patchId, patch] of oldManager.registered) {
+			manager.registered.set(patchId, patch)
+		}
+		return manager
+	}
 
 	constructor() {
-		Blockbench.on('loaded_plugin', ({ plugin }) => {
-			prettyLog({ [`Plugin '${plugin.name}' loaded, enabling its patches...`]: '' })
-			this.setPluginPatchesEnabled(plugin, true)
-			this.queuePatchUpdate()
-		})
-
-		Blockbench.on('unloaded_plugin', ({ plugin }) => {
-			prettyLog({ [`Plugin '${plugin.name}' unloaded, disabling its patches...`]: '' })
-			this.setPluginPatchesEnabled(plugin, false)
-			this.queuePatchUpdate()
-		})
+		Blockbench.addListener('loaded_plugin', this.onLoadedPlugin)
+		Blockbench.addListener('unloaded_plugin', this.onUnloadedPlugin)
 
 		window.BlockbenchPatchManager = this
 
@@ -49,14 +53,68 @@ class PatchManager {
 		})
 	}
 
-	queuePatchUpdate() {
-		if (this.updateTimeout) {
-			clearTimeout(this.updateTimeout)
+	delete() {
+		Blockbench.removeListener('loaded_plugin', this.onLoadedPlugin)
+		Blockbench.removeListener('unloaded_plugin', this.onUnloadedPlugin)
+
+		const eventPatch = this.registered.get(
+			`blockbench-patch-manager:event-hook/pre-select-project`
+		)
+		if (eventPatch) {
+			void eventPatch.revert()
+			this.registered.delete(eventPatch.id)
+		} else {
+			prettyWarn({
+				[`Failed to find event hook patch when deleting PatchManager. This may cause issues if the plugin is reloaded without restarting Blockbench.`]:
+					'color: #ff5555;',
+			})
 		}
-		this.updateTimeout = setTimeout(() => {
-			void this.updatePatches()
-			this.updateTimeout = undefined
-		}, 250)
+	}
+
+	onLoadedPlugin = ({ plugin }: { plugin: BBPlugin }) => {
+		prettyLog({ [`Plugin '${plugin.name}' loaded, enabling its patches...`]: '' })
+		this.setPluginPatchesEnabled(plugin, true)
+		this.updatePatches()
+	}
+
+	onUnloadedPlugin = ({ plugin }: { plugin: BBPlugin }) => {
+		prettyLog({ [`Plugin '${plugin.name}' unloaded, disabling its patches...`]: '' })
+		this.setPluginPatchesEnabled(plugin, false)
+		this.updatePatches()
+	}
+
+	addPatch(patch: PatchHandle) {
+		if (this.registered.has(patch.id)) {
+			prettyWarn({
+				[`A Patch with the ID '${patch.id}' is already registered! The old patch will be overwritten.`]:
+					'color: #ff5555;',
+			})
+			this.removePatch(patch.id)
+		}
+
+		this.registered.set(patch.id, patch)
+		this.installOrder.push(patch.id)
+		this.updatePatchApplicationOrder()
+	}
+
+	removePatch(patchId: string) {
+		const patch = this.registered.get(patchId)
+		if (!patch) {
+			prettyWarn({
+				[`Attempted to remove unknown patch '${patchId}'!`]: 'color: #ff5555;',
+			})
+			return
+		}
+		if (patch.isApplied()) {
+			throw new Error(
+				`Attempted to remove patch '${patchId}' while it is still applied! This indicates a patch has been improperly managed by a plugin developer.`
+			)
+		}
+		this.registered.delete(patchId)
+		const index = this.installOrder.indexOf(patchId)
+		if (index !== -1) {
+			this.installOrder.splice(index, 1)
+		}
 	}
 
 	checkPatchDependencies(patch: PatchHandle) {
@@ -69,54 +127,43 @@ class PatchManager {
 				})
 				return false
 			}
-			if (!dependency.isInstalled()) {
+			if (!dependency.isApplied()) {
 				throw new Error(
-					`Patch '${patch.id}' depends on patch '${dependencyId}', but it is not installed. This is a bug!`
+					`Patch '${patch.id}' depends on patch '${dependencyId}', but it is not applied. This is a bug!`
 				)
 			}
 		}
 		return true
 	}
 
-	async updatePatches() {
-		if (this.updatingPatches) {
-			prettyWarn({
-				[`Attempted to update patches while patches are already being updated. Ignoring...`]:
-					'',
-			})
-			return
-		}
-		this.updatingPatches = true
-
+	updatePatches() {
 		prettyGroupCollapsed({ 'Updating Patches...': 'color: #aaaaaa;' })
 		try {
-			prettyLog({ 'Uninstalling patches...': 'color: #ff5555; font-weight: bold;' })
+			prettyLog({ 'Reverting patches...': 'color: #ff5555; font-weight: bold;' })
 			for (const patchId of this.installOrder.slice().reverse()) {
 				const patch = this.registered.get(patchId)!
-				if (patch.isInstalled()) {
-					await patch.revert()
+				if (patch.isApplied()) {
+					patch.revert()
 				}
 			}
 
-			prettyLog({ 'Installing enabled patches...': 'color: #55ff55; font-weight: bold;' })
+			prettyLog({ 'Applying enabled patches...': 'color: #55ff55; font-weight: bold;' })
 			for (const patchId of this.installOrder) {
 				const patch = this.registered.get(patchId)!
-				if (!patch.isInstalled() && patch.enabled) {
+				if (!patch.isApplied() && patch.enabled) {
 					if (!this.checkPatchDependencies(patch)) {
 						prettyWarn({
 							[`Skipping patch '${patch.id}' due to missing dependencies.`]: '',
 						})
 						continue
 					}
-					await patch.apply()
+					patch.apply()
 				}
 			}
 		} catch (e) {
 			console.groupEnd()
-			this.updatingPatches = false
 			throw e
 		}
-		this.updatingPatches = false
 		console.groupEnd()
 	}
 
@@ -177,4 +224,12 @@ class PatchManager {
 
 if (window.BlockbenchPatchManager == null) {
 	new PatchManager()
+} else if (
+	// @ts-expect-error - Blockbench VersionUtil library isn't typed yet.
+	VersionUtil.compare(window.BlockbenchPatchManager.version, '<', PatchManager.latestVersion)
+) {
+	console.warn(
+		`A newer version of Blockbench Patch Mangager (${PatchManager.latestVersion}) is installed alongside an old version ${window.BlockbenchPatchManager.version}. Attempting to upgrade the old version...`
+	)
+	PatchManager.upgrade(window.BlockbenchPatchManager)
 }

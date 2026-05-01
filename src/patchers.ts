@@ -8,9 +8,9 @@ export interface PatchHandle {
 	dependencies?: string[]
 	priority: number
 	enabled: boolean
-	isInstalled(): boolean
-	apply: () => Promise<void>
-	revert: () => Promise<void>
+	isApplied(): boolean
+	apply: () => void
+	revert: () => void
 }
 
 export interface BasePatchOptions {
@@ -31,12 +31,12 @@ export interface BasePatchOptions {
 
 interface PatchOptions<RevertContext extends any | void> extends BasePatchOptions {
 	/** A function that applies the patch. This function should return a context object that will be passed to the revert function. */
-	apply: () => Promise<RevertContext> | RevertContext
+	apply: () => RevertContext
 	/**
 	 * A function that reverts the patch
 	 * @param ctx The context object returned by the apply function
 	 */
-	revert: (ctx: RevertContext) => Promise<void> | void
+	revert: (ctx: RevertContext) => void
 }
 
 /**
@@ -56,11 +56,7 @@ export function registerPatch<RevertContext extends any | void>(
 	}
 
 	let applyContext: RevertContext
-	let installed = false
-
-	if (BlockbenchPatchManager.registered.has(options.id)) {
-		throw new Error(`A Patch with the ID '${options.id}' is already registered!`)
-	}
+	let applied = false
 
 	const handle: PatchHandle = {
 		id: options.id,
@@ -68,34 +64,34 @@ export function registerPatch<RevertContext extends any | void>(
 		priority: options.priority ?? 0,
 		enabled: true,
 
-		isInstalled() {
-			return installed
+		isApplied() {
+			return applied
 		},
 
-		async apply() {
+		apply() {
 			if (!this.enabled) return
 			prettyLog({ 'Applying ': 'color: #55ff55;', [options.id]: 'color: #ffff55;' })
 			try {
-				if (installed)
+				if (applied)
 					throw new Error(
 						`Attempted to apply '${options.id}' while it was already applied.`
 					)
-				applyContext = await options.apply()
-				installed = true
+				applyContext = options.apply()
+				applied = true
 			} catch (err) {
 				debugger // Intentional debugger statement to make it easier to debug failed patches
 				throw new PatchApplyError(options.id, err as Error)
 			}
 		},
 
-		async revert() {
-			if (!this.enabled && !installed) return
+		revert() {
+			if (!this.enabled && !applied) return
 			prettyLog({ 'Reverting ': 'color: #ff5555;', [options.id]: 'color: #ffff55;' })
 			try {
-				if (!installed)
+				if (!applied)
 					throw new Error(`Attempted to revert '${options.id}' before it was applied.`)
-				await options.revert(applyContext)
-				installed = false
+				options.revert(applyContext)
+				applied = false
 			} catch (err) {
 				debugger // Intentional debugger statement to make it easier to debug failed patches
 				throw new PatchRevertError(options.id, err as Error)
@@ -103,10 +99,7 @@ export function registerPatch<RevertContext extends any | void>(
 		},
 	}
 
-	BlockbenchPatchManager.registered.set(options.id, handle)
-	BlockbenchPatchManager.installOrder.push(options.id)
-	BlockbenchPatchManager.updatePatchApplicationOrder()
-
+	BlockbenchPatchManager.addPatch(handle)
 	return handle
 }
 
@@ -115,8 +108,6 @@ interface RegisterProjectPatchOptions<
 > extends PatchOptions<RevertContext> {
 	/** A function that checks if the patch should be applied when switching projects */
 	condition: ConditionResolvable<{ project: ModelProject }>
-	apply: () => RevertContext
-	revert: (ctx: RevertContext) => void
 	/**
 	 * If true, the patch will be reverted (and re-applied) when switching to a different project, even if the new project also meets the condition for applying the patch.
 	 */
@@ -127,8 +118,6 @@ interface RegisterProjectPatchOptions<
  * Registers a patch that is only applied when a project is selected that meets the provided condition.
  *
  * Used to apply patches that are specific to a custom model format.
- *
- * NOTE: The `apply` and `revert` functions of this patch are not awaited.
  */
 export function registerProjectPatch<RevertContext extends any | void>(
 	options: RegisterProjectPatchOptions<RevertContext>
@@ -137,25 +126,25 @@ export function registerProjectPatch<RevertContext extends any | void>(
 	let parentPatchHandle: PatchHandle
 	options.alwaysRevertOnProjectChange ??= false
 
-	let isApplied = false
+	let applied = false
 
 	const onPreSelectProject = (project: ModelProject) => {
-		if (isApplied) return
+		if (applied) return
 		if (!Condition(options.condition, { project })) return
 		prettyLog({ 'Applying project patch ': 'color: #55ff55;', [options.id]: 'color: #ffff55;' })
 		revertContext = options.apply()
-		isApplied = true
+		applied = true
 	}
 
 	const onUnselectProject = () => {
-		if (!isApplied) return
+		if (!applied) return
 		prettyLog({
 			'Reverting project patch ': 'color: #ff5555;',
 			[options.id]: 'color: #ffff55;',
 		})
 		options.revert(revertContext!)
 		revertContext = null
-		isApplied = false
+		applied = false
 	}
 
 	// eslint-disable-next-line prefer-const
