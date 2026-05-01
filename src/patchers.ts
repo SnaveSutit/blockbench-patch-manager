@@ -360,6 +360,7 @@ export function registerPropertyOverridePatch<
 
 			const descriptor: PropertyDescriptor = {
 				configurable: true,
+				enumerable: originalDescriptor.enumerable,
 			}
 
 			if (options.get) {

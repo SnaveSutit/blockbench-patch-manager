@@ -118,6 +118,7 @@ export function overrideAccessors<
 
 	const overrideDescriptor: PropertyDescriptor = {
 		configurable: true,
+		enumerable: originalDescriptor.enumerable,
 		get() {
 			getReturnValue = currentValue
 			onGet.publish(currentValue)
