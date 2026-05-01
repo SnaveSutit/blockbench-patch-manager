@@ -45,7 +45,7 @@ declare global {
  * ```
  */
 export function overrideAccessors<
-	Target extends {},
+	Target extends object,
 	Key extends keyof Target,
 	Value extends Target[Key],
 >(options: {

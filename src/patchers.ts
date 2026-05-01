@@ -279,7 +279,7 @@ export function registerDeletableHandlerPatch<T extends Deletable>(
 }
 
 interface PropertyOverridePatchOptions<
-	Target extends Object,
+	Target extends object,
 	Key extends keyof Target,
 	Value extends Target[Key],
 > extends BasePatchOptions {
@@ -314,7 +314,7 @@ interface PropertyOverridePatchOptions<
  * The original property descriptor is restored when the patch is uninstalled.
  */
 export function registerPropertyOverridePatch<
-	Target extends Object,
+	Target extends object,
 	Key extends keyof Target,
 	Value extends Target[Key],
 >(options: PropertyOverridePatchOptions<Target, Key, Value>) {
