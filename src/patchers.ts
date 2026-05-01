@@ -1,6 +1,6 @@
+import './manager'
 import subscribable, { Subscribable } from 'simple-subpub'
 import { PatchApplyError, PatchRevertError } from './errors'
-import { updatePatchApplicationOrder, validatePatchId } from './manager'
 import { prettyLog } from './log'
 
 export interface PatchHandle {
@@ -15,7 +15,7 @@ export interface PatchHandle {
 
 export interface BasePatchOptions {
 	/**
-	 * The unique identifier for the patch. E.g: 'animated-java:example_patch'
+	 * The unique identifier for the patch. E.g: 'animated_java:example_patch'
 	 * The namespace MUST match your plugin's ID.
 	 */
 	id: string
@@ -49,7 +49,7 @@ interface PatchOptions<RevertContext extends any | void> extends BasePatchOption
 export function registerPatch<RevertContext extends any | void>(
 	options: PatchOptions<RevertContext>
 ) {
-	if (!validatePatchId(options.id)) {
+	if (!BlockbenchPatchManager.validatePatchId(options.id)) {
 		throw new Error(
 			`Failed to register patch with invalid ID '${options.id}'. See previous warnings for more details.`
 		)
@@ -105,7 +105,7 @@ export function registerPatch<RevertContext extends any | void>(
 
 	BlockbenchPatchManager.registered.set(options.id, handle)
 	BlockbenchPatchManager.installOrder.push(options.id)
-	updatePatchApplicationOrder()
+	BlockbenchPatchManager.updatePatchApplicationOrder()
 
 	return handle
 }
