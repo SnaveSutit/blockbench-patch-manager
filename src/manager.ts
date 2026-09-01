@@ -3,6 +3,13 @@ import { PatchHandle, registerPropertyOverridePatch } from './patchers'
 import PACKAGE from '../package.json'
 /// <reference types="blockbench-types" />
 
+/**
+ * How long (ms) to wait after a patch update before another one may run
+ * immediately. Requests that arrive during the cooldown are collapsed into a
+ * single trailing update, and each request resets the timer.
+ */
+const PATCH_UPDATE_COOLDOWN = 250
+
 declare global {
 	interface BlockbenchEventMap {
 		'blockbench-patch-manager:pre_select_project': ModelProject
@@ -21,6 +28,10 @@ class PatchManager implements Deletable {
 	registered = new Map<string, PatchHandle>()
 	installOrder: string[] = []
 
+	private updateCooldown?: ReturnType<typeof setTimeout>
+	private pendingUpdate = false
+	private updatingPatches = false
+
 	static upgrade(oldManager: PatchManager) {
 		oldManager.delete()
 		const manager = new PatchManager()
@@ -28,6 +39,7 @@ class PatchManager implements Deletable {
 		for (const [patchId, patch] of oldManager.registered) {
 			manager.registered.set(patchId, patch)
 		}
+		manager.runPatchUpdate()
 		return manager
 	}
 
@@ -60,8 +72,20 @@ class PatchManager implements Deletable {
 		const eventPatch = this.registered.get(
 			`blockbench-patch-manager:event-hook/pre-select-project`
 		)
+		if (this.updateCooldown !== undefined) {
+			clearTimeout(this.updateCooldown)
+			this.updateCooldown = undefined
+		}
+		this.pendingUpdate = false
+
 		if (eventPatch) {
-			void eventPatch.revert()
+			try {
+				void eventPatch.revert()
+			} catch (error) {
+				prettyError({
+					[`Failed to revert event hook patch: ${error}`]: 'color: #ff5555;',
+				})
+			}
 			this.registered.delete(eventPatch.id)
 		} else {
 			prettyWarn({
@@ -74,13 +98,66 @@ class PatchManager implements Deletable {
 	onLoadedPlugin = ({ plugin }: { plugin: BBPlugin }) => {
 		prettyLog({ [`Plugin '${plugin.name}' loaded, enabling its patches...`]: '' })
 		this.setPluginPatchesEnabled(plugin, true)
-		this.updatePatches()
+		this.queuePatchUpdate()
 	}
 
 	onUnloadedPlugin = ({ plugin }: { plugin: BBPlugin }) => {
 		prettyLog({ [`Plugin '${plugin.name}' unloaded, disabling its patches...`]: '' })
 		this.setPluginPatchesEnabled(plugin, false)
-		this.updatePatches()
+		this.queuePatchUpdate()
+	}
+
+	/**
+	 * Requests a patch update.
+	 *
+	 * The first request runs immediately so plugin loads/unloads feel
+	 * responsive. Any further request that arrives within
+	 * {@link PATCH_UPDATE_COOLDOWN}ms of the previous one is collapsed into a
+	 * single trailing update that runs once the cooldown elapses without another
+	 * request — so a slow sequence of plugin loads waits for the final plugin
+	 * before re-running.
+	 */
+	queuePatchUpdate() {
+		const runImmediately = this.updateCooldown === undefined
+		this.startUpdateCooldown()
+		if (runImmediately) {
+			this.runPatchUpdate()
+		} else {
+			this.pendingUpdate = true
+		}
+	}
+
+	private startUpdateCooldown() {
+		if (this.updateCooldown !== undefined) {
+			clearTimeout(this.updateCooldown)
+		}
+		this.updateCooldown = setTimeout(() => {
+			this.updateCooldown = undefined
+			if (!this.pendingUpdate) return
+			this.pendingUpdate = false
+			try {
+				this.runPatchUpdate()
+			} finally {
+				// Keep the cooldown running so a request arriving right after the
+				// trailing update is still debounced instead of running immediately.
+				this.startUpdateCooldown()
+			}
+		}, PATCH_UPDATE_COOLDOWN)
+	}
+
+	private runPatchUpdate() {
+		if (this.updatingPatches) {
+			// Re-entered from within an update (e.g. a patch that itself triggers
+			// a plugin load). Defer to a trailing update instead of recursing.
+			this.pendingUpdate = true
+			return
+		}
+		this.updatingPatches = true
+		try {
+			this.updatePatches()
+		} finally {
+			this.updatingPatches = false
+		}
 	}
 
 	addPatch(patch: PatchHandle) {
@@ -89,6 +166,16 @@ class PatchManager implements Deletable {
 				[`A Patch with the ID '${patch.id}' is already registered! The old patch will be overwritten.`]:
 					'color: #ff5555;',
 			})
+			const oldPatch = this.registered.get(patch.id)
+			if (oldPatch?.isApplied()) {
+				try {
+					oldPatch.revert()
+				} catch (error) {
+					prettyError({
+						[`Failed to revert old patch '${patch.id}': ${error}`]: 'color: #ff5555;',
+					})
+				}
+			}
 			this.removePatch(patch.id)
 		}
 
@@ -226,7 +313,11 @@ if (window.BlockbenchPatchManager == null) {
 	new PatchManager()
 } else if (
 	// @ts-expect-error - Blockbench VersionUtil library isn't typed yet.
-	VersionUtil.compare(window.BlockbenchPatchManager.version, '<', PatchManager.latestVersion)
+	VersionUtil.compare(
+		window.BlockbenchPatchManager.version ?? '0.0.0',
+		'<',
+		PatchManager.latestVersion
+	)
 ) {
 	console.warn(
 		`A newer version of Blockbench Patch Mangager (${PatchManager.latestVersion}) is installed alongside an old version ${window.BlockbenchPatchManager.version}. Attempting to upgrade the old version...`
