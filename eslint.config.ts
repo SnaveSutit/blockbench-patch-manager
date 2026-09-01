@@ -14,7 +14,9 @@ const IGNORE_PATTERNS = [
 	'**/node_modules/**',
 
 	'dist/**/*',
+	'test/**/*',
 	'eslint.config.ts',
+	'*.config.mjs',
 
 	// Ignore files for PNPM, NPM and YARN
 	'pnpm-lock.yaml',

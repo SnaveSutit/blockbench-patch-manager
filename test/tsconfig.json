@@ -1,0 +1,14 @@
+{
+	"extends": "../tsconfig.json",
+	"compilerOptions": {
+		"rootDir": ".",
+		"outDir": "./.tsout",
+		"noEmit": true,
+		"module": "preserve",
+		"moduleResolution": "bundler",
+		"lib": ["ES2022", "DOM"],
+		"types": ["node", "blockbench-types"],
+		"paths": {}
+	},
+	"include": ["src/**/*.ts", "e2e/**/*.ts"]
+}

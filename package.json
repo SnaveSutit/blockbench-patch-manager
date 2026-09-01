@@ -18,12 +18,16 @@
 	"scripts": {
 		"build": "tsc",
 		"dev": "tsc --watch",
+		"build:test": "esbuild test/src/index.ts --bundle --outfile=test/bb_patch_manager_test.js --format=iife --target=es2022 --platform=browser --legal-comments=none --banner:js=\"// GENERATED — do not edit. Source: test/src/*.ts  ·  Rebuild: bun run build && bun run build:test\"",
+		"typecheck:test": "tsc -p test/tsconfig.json",
+		"pretest": "bun run build && bun run build:test",
+		"test": "jest",
 		"prepublishOnly": "bun run build"
 	},
 	"exports": {
 		".": {
-			"default": "./dist/index.js",
-			"types": "./dist/index.d.ts"
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
 		}
 	},
 	"peerDependencies": {
@@ -38,13 +42,20 @@
 		"svelte-preprocess-esbuild": "^3.0.1"
 	},
 	"devDependencies": {
+		"@jest/globals": "^30.5.1",
+		"@swc/jest": "^0.2.39",
 		"@types/node": "^25.0.8",
+		"blockbench-plugin-test": "file:../blockbench-plugin-test",
 		"esbuild": "^0.27.2",
 		"eslint-plugin-check-file": "^3.3.1",
 		"eslint-plugin-svelte": "^3.14.0",
+		"jest": "^30.5.1",
 		"jiti": "^2.6.1",
 		"svelte-eslint-parser": "^1.4.1",
 		"typescript": "^5.9.3",
 		"typescript-eslint": "^8.53.0"
-	}
+	},
+	"trustedDependencies": [
+		"@swc/core"
+	]
 }
