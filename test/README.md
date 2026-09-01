@@ -3,7 +3,7 @@
 The assertions live in a Blockbench plugin (`src/**`) that runs a self-check
 suite against the live `BlockbenchPatchManager`. It can be run two ways:
 
-- **Automated (CI):** [`blockbench-plugin-test`](https://github.com/SnaveSutit/blockbench-plugin-test)
+- **Automated (CI):** [`@snavesutit/jestbench`](https://github.com/SnaveSutit/jestbench)
   loads the plugin into a headless, isolated Blockbench and turns each result
   into a Jest assertion — see [`e2e/patch-manager.test.ts`](./e2e/patch-manager.test.ts).
 - **Manual:** load `test/bb_patch_manager_test.js` into a running Blockbench and
@@ -38,10 +38,10 @@ bun run test           # pretest builds both bundles, then runs Jest
 ```
 
 Requirements: `xvfb-run` on `PATH` for headless Linux.
-[`envbench`](https://github.com/SnaveSutit/envbench) is bundled with
-`blockbench-plugin-test`, so it no longer needs a global install. Config lives in
+[`envbench`](https://github.com/SnaveSutit/envbench) is a dependency of
+`@snavesutit/jestbench`, so it needs no global install. Config lives in
 `blockbench.config.mjs` (Blockbench version, envbench environment) and
-`jest.config.mjs` (the `blockbench-plugin-test` preset). The suite pins
+`jest.config.mjs` (the `@snavesutit/jestbench` preset). The suite pins
 Blockbench `5.1.6`; the first run downloads it (~120 MB) unless the
 `~/.envbench` portables cache is already warm.
 

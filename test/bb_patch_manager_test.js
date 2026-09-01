@@ -442,9 +442,9 @@
         },
         devDependencies: {
           "@jest/globals": "^30.5.1",
+          "@snavesutit/jestbench": "^0.1.0",
           "@swc/jest": "^0.2.39",
           "@types/node": "^25.0.8",
-          "blockbench-plugin-test": "file:../blockbench-plugin-test",
           esbuild: "^0.27.2",
           "eslint-plugin-check-file": "^3.3.1",
           "eslint-plugin-svelte": "^3.14.0",

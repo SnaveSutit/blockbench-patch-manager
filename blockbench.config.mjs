@@ -1,4 +1,4 @@
-import { defineConfig } from 'blockbench-plugin-test'
+import { defineConfig } from '@snavesutit/jestbench'
 
 export default defineConfig({
 	// 5.1.6 is already installed locally via envbench, so the suite runs offline.
