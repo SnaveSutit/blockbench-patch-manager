@@ -1,6 +1,6 @@
 /** @type {import('jest').Config} */
 export default {
-	preset: 'blockbench-plugin-test',
+	preset: '@snavesutit/jestbench',
 	rootDir: '.',
 	testMatch: ['<rootDir>/test/e2e/**/*.test.ts'],
 	transform: {

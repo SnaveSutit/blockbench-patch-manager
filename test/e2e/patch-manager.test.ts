@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from '@jest/globals'
-import { blockbench } from 'blockbench-plugin-test'
+import { blockbench } from '@snavesutit/jestbench'
 
 /**
  * End-to-end suite for the patch manager.
