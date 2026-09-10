@@ -320,69 +320,69 @@
             if (options.target == void 0) {
               throw new Error(`Cannot override property on undefined object.`);
             }
-            let currentValue;
+            let initialValue;
             try {
-              currentValue = options.target[options.key];
+              initialValue = options.target[options.key];
             } catch {
               throw new Error(`Failed to get initial value of property '${String(options.key)}' for PropertyOverridePatch ${String(options.id)}.`);
             }
             const originalDescriptor = Object.getOwnPropertyDescriptor(options.target, options.key) ?? {
-              value: currentValue,
+              value: initialValue,
               writable: true,
               configurable: true
             };
             if (originalDescriptor.configurable === false) {
               throw new Error(`Cannot override property '${String(options.key)}' on object because it is not configurable.`);
             }
+            const originalHasGetter = typeof originalDescriptor.get === "function";
+            const originalHasSetter = typeof originalDescriptor.set === "function";
+            let backingValue = originalHasGetter ? void 0 : originalDescriptor.value;
+            let backingWritten = !originalHasGetter;
+            function readUnderlying() {
+              if (backingWritten)
+                return backingValue;
+              return originalHasGetter ? originalDescriptor.get.call(this) : backingValue;
+            }
+            function writeUnderlying(value) {
+              if (originalHasSetter) {
+                originalDescriptor.set.call(this, value);
+                return;
+              }
+              backingValue = value;
+              backingWritten = true;
+            }
+            let getCondition;
+            if (options.condition && options.getCondition) {
+              getCondition = (context) => Condition(options.condition, context) && Condition(options.getCondition, context);
+            } else {
+              getCondition = options.getCondition ?? options.condition;
+            }
+            let setCondition;
+            if (options.condition && options.setCondition) {
+              setCondition = (context) => Condition(options.condition, context) && Condition(options.setCondition, context);
+            } else {
+              setCondition = options.setCondition ?? options.condition;
+            }
             const descriptor = {
               configurable: true,
-              enumerable: originalDescriptor.enumerable
+              enumerable: originalDescriptor.enumerable,
+              get() {
+                const underlying = readUnderlying.call(this);
+                if (options.get && (!getCondition || Condition(getCondition, { target: this, value: underlying }))) {
+                  return options.get.call(this, underlying);
+                }
+                return underlying;
+              },
+              // Always installed, even for a get-only override, so a plain
+              // `target[key] = value` elsewhere doesn't throw against the accessor.
+              set(value) {
+                if (options.set && (!setCondition || Condition(setCondition, { target: this, value }))) {
+                  writeUnderlying.call(this, options.set.call(this, value));
+                } else {
+                  writeUnderlying.call(this, value);
+                }
+              }
             };
-            if (options.get) {
-              let getCondition;
-              if (options.condition && options.getCondition) {
-                getCondition = (context) => {
-                  return Condition(options.condition, context) && Condition(options.getCondition, context);
-                };
-              } else {
-                getCondition = options.getCondition ?? options.condition;
-              }
-              if (getCondition) {
-                descriptor.get = function() {
-                  if (Condition(getCondition, { target: this, value: currentValue })) {
-                    return options.get.call(this, currentValue);
-                  }
-                  return currentValue;
-                };
-              } else {
-                descriptor.get = function() {
-                  return options.get.call(this, currentValue);
-                };
-              }
-            }
-            if (options.set) {
-              let setCondition;
-              if (options.condition && options.setCondition) {
-                setCondition = (context) => {
-                  return Condition(options.condition, context) && Condition(options.setCondition, context);
-                };
-              } else {
-                setCondition = options.setCondition ?? options.condition;
-              }
-              if (setCondition) {
-                descriptor.set = function(value) {
-                  if (Condition(setCondition, { target: this, value })) {
-                    currentValue = options.set.call(this, value);
-                  } else {
-                    currentValue = value;
-                  }
-                };
-              } else {
-                descriptor.set = function(value) {
-                  currentValue = options.set.call(this, value);
-                };
-              }
-            }
             Object.defineProperty(options.target, options.key, descriptor);
             return { originalDescriptor };
           },
@@ -399,7 +399,7 @@
     "package.json"(exports, module) {
       module.exports = {
         name: "blockbench-patch-manager",
-        version: "1.1.0",
+        version: "1.3.0",
         author: {
           name: "SnaveSutit",
           email: "snavesutit@gmail.com",
@@ -473,6 +473,7 @@
       var patchers_1 = require_patchers();
       var package_json_1 = __importDefault(require_package());
       var PATCH_UPDATE_COOLDOWN = 250;
+      var EVENT_HOOK_ID2 = "blockbench-patch-manager:event-hook/pre-select-project";
       var PatchManager = class _PatchManager {
         static latestVersion = package_json_1.default.version;
         version = package_json_1.default.version;
@@ -484,10 +485,16 @@
         static upgrade(oldManager) {
           oldManager.delete();
           const manager = new _PatchManager();
-          manager.installOrder = [...oldManager.installOrder];
-          for (const [patchId, patch] of oldManager.registered) {
+          for (const patchId of oldManager.installOrder) {
+            if (patchId === EVENT_HOOK_ID2)
+              continue;
+            const patch = oldManager.registered.get(patchId);
+            if (!patch || manager.registered.has(patchId))
+              continue;
             manager.registered.set(patchId, patch);
+            manager.installOrder.push(patchId);
           }
+          manager.updatePatchApplicationOrder();
           manager.runPatchUpdate();
           return manager;
         }
@@ -496,7 +503,7 @@
           Blockbench.addListener("unloaded_plugin", this.onUnloadedPlugin);
           window.BlockbenchPatchManager = this;
           (0, patchers_1.registerPropertyOverridePatch)({
-            id: `blockbench-patch-manager:event-hook/pre-select-project`,
+            id: EVENT_HOOK_ID2,
             priority: -Infinity,
             target: ModelProject.prototype,
             key: "loadEditorState",
@@ -511,21 +518,25 @@
         delete() {
           Blockbench.removeListener("loaded_plugin", this.onLoadedPlugin);
           Blockbench.removeListener("unloaded_plugin", this.onUnloadedPlugin);
-          const eventPatch = this.registered.get(`blockbench-patch-manager:event-hook/pre-select-project`);
           if (this.updateCooldown !== void 0) {
             clearTimeout(this.updateCooldown);
             this.updateCooldown = void 0;
           }
           this.pendingUpdate = false;
+          const eventPatch = this.registered.get(EVENT_HOOK_ID2);
           if (eventPatch) {
             try {
-              void eventPatch.revert();
+              if (eventPatch.isApplied())
+                eventPatch.revert();
             } catch (error) {
               (0, log_1.prettyError)({
                 [`Failed to revert event hook patch: ${error}`]: "color: #ff5555;"
               });
             }
-            this.registered.delete(eventPatch.id);
+            this.registered.delete(EVENT_HOOK_ID2);
+            const index = this.installOrder.indexOf(EVENT_HOOK_ID2);
+            if (index !== -1)
+              this.installOrder.splice(index, 1);
           } else {
             (0, log_1.prettyWarn)({
               [`Failed to find event hook patch when deleting PatchManager. This may cause issues if the plugin is reloaded without restarting Blockbench.`]: "color: #ff5555;"
@@ -644,34 +655,61 @@
           }
           return true;
         }
+        /**
+         * Reverts every installed patch, re-sorts, then re-applies every enabled one.
+         * A patch that throws is logged and skipped so one bad patch can't halt the
+         * pass and leave every later patch (the event hook included) uninstalled.
+         */
         updatePatches() {
           (0, log_1.prettyGroupCollapsed)({ "Updating Patches...": "color: #aaaaaa;" });
           try {
             (0, log_1.prettyLog)({ "Reverting patches...": "color: #ff5555; font-weight: bold;" });
             for (const patchId of this.installOrder.slice().reverse()) {
               const patch = this.registered.get(patchId);
-              if (patch.isApplied()) {
+              if (!patch.isApplied())
+                continue;
+              try {
                 patch.revert();
+              } catch (error) {
+                (0, log_1.prettyError)({
+                  [`Patch '${patch.id}' threw while reverting; continuing with the rest.`]: "color: #ff5555;",
+                  [String(error)]: "color: #ff5555;"
+                });
               }
             }
             (0, log_1.prettyLog)({ "Applying enabled patches...": "color: #55ff55; font-weight: bold;" });
             for (const patchId of this.installOrder) {
               const patch = this.registered.get(patchId);
-              if (!patch.isApplied() && patch.enabled) {
-                if (!this.checkPatchDependencies(patch)) {
-                  (0, log_1.prettyWarn)({
-                    [`Skipping patch '${patch.id}' due to missing dependencies.`]: ""
-                  });
-                  continue;
-                }
+              if (patch.isApplied() || !patch.enabled)
+                continue;
+              let dependenciesMet;
+              try {
+                dependenciesMet = this.checkPatchDependencies(patch);
+              } catch (error) {
+                (0, log_1.prettyError)({
+                  [`Patch '${patch.id}' has a broken dependency and was skipped.`]: "color: #ff5555;",
+                  [String(error)]: "color: #ff5555;"
+                });
+                continue;
+              }
+              if (!dependenciesMet) {
+                (0, log_1.prettyWarn)({
+                  [`Skipping patch '${patch.id}' due to missing dependencies.`]: ""
+                });
+                continue;
+              }
+              try {
                 patch.apply();
+              } catch (error) {
+                (0, log_1.prettyError)({
+                  [`Patch '${patch.id}' threw while applying and was skipped; other patches will still load.`]: "color: #ff5555;",
+                  [String(error)]: "color: #ff5555;"
+                });
               }
             }
-          } catch (e) {
+          } finally {
             console.groupEnd();
-            throw e;
           }
-          console.groupEnd();
         }
         getPatchOwner(modId) {
           const [namespace] = modId.split(":");
@@ -1190,6 +1228,39 @@
         );
       }
     },
+    {
+      group: "Errors",
+      name: "updatePatches() skips a patch that throws on apply and still applies the rest",
+      fn: (ctx) => {
+        const throwerId = `${PLUGIN_ID}:resilient-thrower`;
+        const thrower = (0, import_dist.registerPatch)({
+          id: throwerId,
+          priority: 10,
+          apply: () => {
+            throw new Error("kaboom");
+          },
+          revert: () => {
+          }
+        });
+        ctx.cleanup(() => {
+          try {
+            if (BlockbenchPatchManager.registered.get(throwerId) === thrower) {
+              BlockbenchPatchManager.removePatch(throwerId);
+            }
+          } catch (error) {
+            console.error(error);
+          }
+        });
+        const after = createPatch(ctx, { name: "resilient-after", priority: 0 });
+        BlockbenchPatchManager.updatePatches();
+        assert(!thrower.isApplied(), "the throwing patch is left unapplied");
+        assert(after.handle.isApplied(), "a patch after it in the pass still applied");
+        assert(
+          BlockbenchPatchManager.registered.get(EVENT_HOOK_ID).isApplied(),
+          "the built-in event hook (last in the pass) still applied"
+        );
+      }
+    },
     // ─── Debounced updates ───────────────────────────────────────────────────
     {
       group: "Debounce",
@@ -1327,6 +1398,88 @@
         const restored = Object.getOwnPropertyDescriptor(target, "hidden");
         assertEqual(restored.enumerable, false, "restored descriptor keeps enumerable: false");
         assertEqual(restored.value, 5, "restored descriptor keeps the original value");
+      }
+    },
+    {
+      group: "Property override",
+      name: "stacked conditional overrides compose the same regardless of which registers first",
+      fn: () => {
+        const check = (firstId, secondId) => {
+          const target = { role: "base" };
+          const active = { [firstId]: false, [secondId]: false };
+          const order = [firstId, secondId];
+          for (const name of order) {
+            (0, import_dist.registerPropertyOverridePatch)({
+              id: `${PLUGIN_ID}:${name}`,
+              target,
+              key: "role",
+              getCondition: () => active[name],
+              get: () => name
+            });
+          }
+          const handles = order.map(
+            (name) => BlockbenchPatchManager.registered.get(`${PLUGIN_ID}:${name}`)
+          );
+          try {
+            BlockbenchPatchManager.updatePatches();
+            assertEqual(target.role, "base", `${firstId}|${secondId}: neither condition active`);
+            active[firstId] = true;
+            assertEqual(
+              target.role,
+              firstId,
+              `${firstId}|${secondId}: the first-registered override still wins under the second`
+            );
+            active[firstId] = false;
+            active[secondId] = true;
+            assertEqual(
+              target.role,
+              secondId,
+              `${firstId}|${secondId}: the second-registered override wins when its condition matches`
+            );
+          } finally {
+            for (const handle of [...handles].reverse()) {
+              try {
+                if (handle.isApplied()) handle.revert();
+              } catch (error) {
+                console.error(error);
+              }
+              try {
+                BlockbenchPatchManager.removePatch(handle.id);
+              } catch (error) {
+                console.error(error);
+              }
+            }
+          }
+        };
+        check("alpha", "beta");
+        check("beta", "alpha");
+      }
+    },
+    {
+      group: "Property override",
+      name: "a getter-only override keeps a pass-through setter so a plain assignment does not throw",
+      fn: (ctx) => {
+        const target = { fn: () => "original" };
+        const id = `${PLUGIN_ID}:assign-through`;
+        (0, import_dist.registerPropertyOverridePatch)({
+          id,
+          target,
+          key: "fn",
+          getCondition: () => false,
+          // never use our override → always the underlying value
+          get: () => () => "override"
+        });
+        trackHandle(ctx, BlockbenchPatchManager.registered.get(id));
+        BlockbenchPatchManager.updatePatches();
+        assertEqual(target.fn(), "original", "condition false \u2192 the underlying value is returned");
+        let threw = false;
+        try {
+          target.fn = () => "replaced";
+        } catch {
+          threw = true;
+        }
+        assert(!threw, "assigning to the getter-only override did not throw");
+        assertEqual(target.fn(), "replaced", "the assignment propagated to the underlying value");
       }
     },
     // ─── Low-level accessor overrides ────────────────────────────────────────

@@ -44,7 +44,9 @@ interface PatchOptions<RevertContext extends any | void> extends BasePatchOption
  *
  * Patches can depend on other patches, and will be installed in the correct order.
  *
- * If a patch fails to install, an error will be thrown, and the plugin will fail to load.
+ * A failure in `apply()` is wrapped in a {@link PatchApplyError}. It is rethrown to a
+ * direct `handle.apply()` caller, but during a managed pass (`updatePatches()`, and so
+ * every plugin load/unload) it is logged and the patch skipped so other patches still load.
  */
 export function registerPatch<RevertContext extends any | void>(
 	options: PatchOptions<RevertContext>
@@ -321,9 +323,9 @@ export function registerPropertyOverridePatch<
 				throw new Error(`Cannot override property on undefined object.`)
 			}
 
-			let currentValue: Value
+			let initialValue: Value
 			try {
-				currentValue = options.target[options.key] as Value
+				initialValue = options.target[options.key] as Value
 			} catch {
 				throw new Error(
 					`Failed to get initial value of property '${String(options.key)}' for PropertyOverridePatch ${String(options.id)}.`
@@ -334,7 +336,7 @@ export function registerPropertyOverridePatch<
 				options.target,
 				options.key
 			) ?? {
-				value: currentValue,
+				value: initialValue,
 				writable: true,
 				configurable: true,
 			}
@@ -347,66 +349,76 @@ export function registerPropertyOverridePatch<
 				)
 			}
 
+			// Read the pre-override value. When the layer below is itself an accessor
+			// (another plugin's override), read through its getter live so stacked
+			// conditional overrides delegate to each other rather than snapshotting.
+			const originalHasGetter = typeof originalDescriptor.get === 'function'
+			const originalHasSetter = typeof originalDescriptor.set === 'function'
+			let backingValue: Value = originalHasGetter
+				? (undefined as Value)
+				: (originalDescriptor.value as Value)
+			let backingWritten = !originalHasGetter
+
+			function readUnderlying(this: Target): Value {
+				if (backingWritten) return backingValue
+				return originalHasGetter
+					? (originalDescriptor.get!.call(this) as Value)
+					: backingValue
+			}
+
+			function writeUnderlying(this: Target, value: Value) {
+				if (originalHasSetter) {
+					originalDescriptor.set!.call(this, value)
+					return
+				}
+				backingValue = value
+				backingWritten = true
+			}
+
+			let getCondition: ConditionResolvable<{ target: Target; value: Value }> | undefined
+			if (options.condition && options.getCondition) {
+				getCondition = context =>
+					Condition(options.condition, context) &&
+					Condition(options.getCondition, context)
+			} else {
+				getCondition = options.getCondition ?? options.condition
+			}
+
+			let setCondition: ConditionResolvable<{ target: Target; value: Value }> | undefined
+			if (options.condition && options.setCondition) {
+				setCondition = context =>
+					Condition(options.condition, context) &&
+					Condition(options.setCondition, context)
+			} else {
+				setCondition = options.setCondition ?? options.condition
+			}
+
 			const descriptor: PropertyDescriptor = {
 				configurable: true,
 				enumerable: originalDescriptor.enumerable,
-			}
-
-			if (options.get) {
-				let getCondition: ConditionResolvable<{ target: Target; value: Value }> | undefined
-
-				if (options.condition && options.getCondition) {
-					getCondition = context => {
-						return (
-							Condition(options.condition, context) &&
-							Condition(options.getCondition, context)
-						)
+				get(this: Target) {
+					const underlying = readUnderlying.call(this)
+					if (
+						options.get &&
+						(!getCondition ||
+							Condition(getCondition, { target: this, value: underlying }))
+					) {
+						return options.get.call(this, underlying)
 					}
-				} else {
-					getCondition = options.getCondition ?? options.condition
-				}
-
-				if (getCondition) {
-					descriptor.get = function (this: Target) {
-						if (Condition(getCondition!, { target: this, value: currentValue })) {
-							return options.get!.call(this, currentValue)
-						}
-						return currentValue
+					return underlying
+				},
+				// Always installed, even for a get-only override, so a plain
+				// `target[key] = value` elsewhere doesn't throw against the accessor.
+				set(this: Target, value: Value) {
+					if (
+						options.set &&
+						(!setCondition || Condition(setCondition, { target: this, value }))
+					) {
+						writeUnderlying.call(this, options.set.call(this, value))
+					} else {
+						writeUnderlying.call(this, value)
 					}
-				} else {
-					descriptor.get = function (this: Target) {
-						return options.get!.call(this, currentValue)
-					}
-				}
-			}
-
-			if (options.set) {
-				let setCondition: ConditionResolvable<{ target: Target; value: Value }> | undefined
-
-				if (options.condition && options.setCondition) {
-					setCondition = context => {
-						return (
-							Condition(options.condition, context) &&
-							Condition(options.setCondition, context)
-						)
-					}
-				} else {
-					setCondition = options.setCondition ?? options.condition
-				}
-
-				if (setCondition) {
-					descriptor.set = function (this: Target, value) {
-						if (Condition(setCondition!, { target: this, value })) {
-							currentValue = options.set!.call(this, value)
-						} else {
-							currentValue = value
-						}
-					}
-				} else {
-					descriptor.set = function (this: Target, value) {
-						currentValue = options.set!.call(this, value)
-					}
-				}
+				},
 			}
 
 			Object.defineProperty(options.target, options.key, descriptor)

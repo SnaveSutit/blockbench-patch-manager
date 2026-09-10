@@ -10,6 +10,9 @@ import PACKAGE from '../package.json'
  */
 const PATCH_UPDATE_COOLDOWN = 250
 
+/** Id of the built-in patch backing the `pre_select_project` event. */
+const EVENT_HOOK_ID = 'blockbench-patch-manager:event-hook/pre-select-project'
+
 declare global {
 	interface BlockbenchEventMap {
 		'blockbench-patch-manager:pre_select_project': ModelProject
@@ -33,12 +36,23 @@ class PatchManager implements Deletable {
 	private updatingPatches = false
 
 	static upgrade(oldManager: PatchManager) {
+		// delete() detaches the old manager and reverts its event hook. The other
+		// patches it owns stay applied until runPatchUpdate() below cycles them.
 		oldManager.delete()
+
 		const manager = new PatchManager()
-		manager.installOrder = [...oldManager.installOrder]
-		for (const [patchId, patch] of oldManager.registered) {
+
+		// Carry the old patches over in install order, minus the event hook the
+		// new constructor already re-registered.
+		for (const patchId of oldManager.installOrder) {
+			if (patchId === EVENT_HOOK_ID) continue
+			const patch = oldManager.registered.get(patchId)
+			if (!patch || manager.registered.has(patchId)) continue
 			manager.registered.set(patchId, patch)
+			manager.installOrder.push(patchId)
 		}
+
+		manager.updatePatchApplicationOrder()
 		manager.runPatchUpdate()
 		return manager
 	}
@@ -50,7 +64,7 @@ class PatchManager implements Deletable {
 		window.BlockbenchPatchManager = this
 
 		registerPropertyOverridePatch({
-			id: `blockbench-patch-manager:event-hook/pre-select-project`,
+			id: EVENT_HOOK_ID,
 			priority: -Infinity,
 
 			target: ModelProject.prototype,
@@ -69,24 +83,24 @@ class PatchManager implements Deletable {
 		Blockbench.removeListener('loaded_plugin', this.onLoadedPlugin)
 		Blockbench.removeListener('unloaded_plugin', this.onUnloadedPlugin)
 
-		const eventPatch = this.registered.get(
-			`blockbench-patch-manager:event-hook/pre-select-project`
-		)
 		if (this.updateCooldown !== undefined) {
 			clearTimeout(this.updateCooldown)
 			this.updateCooldown = undefined
 		}
 		this.pendingUpdate = false
 
+		const eventPatch = this.registered.get(EVENT_HOOK_ID)
 		if (eventPatch) {
 			try {
-				void eventPatch.revert()
+				if (eventPatch.isApplied()) eventPatch.revert()
 			} catch (error) {
 				prettyError({
 					[`Failed to revert event hook patch: ${error}`]: 'color: #ff5555;',
 				})
 			}
-			this.registered.delete(eventPatch.id)
+			this.registered.delete(EVENT_HOOK_ID)
+			const index = this.installOrder.indexOf(EVENT_HOOK_ID)
+			if (index !== -1) this.installOrder.splice(index, 1)
 		} else {
 			prettyWarn({
 				[`Failed to find event hook patch when deleting PatchManager. This may cause issues if the plugin is reloaded without restarting Blockbench.`]:
@@ -223,35 +237,65 @@ class PatchManager implements Deletable {
 		return true
 	}
 
+	/**
+	 * Reverts every installed patch, re-sorts, then re-applies every enabled one.
+	 * A patch that throws is logged and skipped so one bad patch can't halt the
+	 * pass and leave every later patch (the event hook included) uninstalled.
+	 */
 	updatePatches() {
 		prettyGroupCollapsed({ 'Updating Patches...': 'color: #aaaaaa;' })
 		try {
 			prettyLog({ 'Reverting patches...': 'color: #ff5555; font-weight: bold;' })
 			for (const patchId of this.installOrder.slice().reverse()) {
 				const patch = this.registered.get(patchId)!
-				if (patch.isApplied()) {
+				if (!patch.isApplied()) continue
+				try {
 					patch.revert()
+				} catch (error) {
+					prettyError({
+						[`Patch '${patch.id}' threw while reverting; continuing with the rest.`]:
+							'color: #ff5555;',
+						[String(error)]: 'color: #ff5555;',
+					})
 				}
 			}
 
 			prettyLog({ 'Applying enabled patches...': 'color: #55ff55; font-weight: bold;' })
 			for (const patchId of this.installOrder) {
 				const patch = this.registered.get(patchId)!
-				if (!patch.isApplied() && patch.enabled) {
-					if (!this.checkPatchDependencies(patch)) {
-						prettyWarn({
-							[`Skipping patch '${patch.id}' due to missing dependencies.`]: '',
-						})
-						continue
-					}
+				if (patch.isApplied() || !patch.enabled) continue
+
+				let dependenciesMet: boolean
+				try {
+					dependenciesMet = this.checkPatchDependencies(patch)
+				} catch (error) {
+					prettyError({
+						[`Patch '${patch.id}' has a broken dependency and was skipped.`]:
+							'color: #ff5555;',
+						[String(error)]: 'color: #ff5555;',
+					})
+					continue
+				}
+				if (!dependenciesMet) {
+					prettyWarn({
+						[`Skipping patch '${patch.id}' due to missing dependencies.`]: '',
+					})
+					continue
+				}
+
+				try {
 					patch.apply()
+				} catch (error) {
+					prettyError({
+						[`Patch '${patch.id}' threw while applying and was skipped; other patches will still load.`]:
+							'color: #ff5555;',
+						[String(error)]: 'color: #ff5555;',
+					})
 				}
 			}
-		} catch (e) {
+		} finally {
 			console.groupEnd()
-			throw e
 		}
-		console.groupEnd()
 	}
 
 	getPatchOwner(modId: string) {

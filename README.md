@@ -275,7 +275,7 @@ This is used internally by `registerProjectPatch` to apply patches at the right 
 
 ## 🚨 Error handling
 
-Errors thrown inside `apply` or `revert` callbacks are wrapped and rethrown:
+Errors thrown inside `apply` or `revert` callbacks are wrapped:
 
 | Error class        | When thrown                       |
 | ------------------ | --------------------------------- |
@@ -283,6 +283,8 @@ Errors thrown inside `apply` or `revert` callbacks are wrapped and rethrown:
 | `PatchRevertError` | User's `revert()` function throws |
 
 Both include the patch `id` and the original error's message and stack for easy diagnosis.
+
+Calling `handle.apply()` / `handle.revert()` directly rethrows the wrapped error. During a **managed pass** (`updatePatches()`, and therefore every plugin load/unload) a patch that throws is logged and skipped instead — one misbehaving patch, e.g. one that collides with another plugin's override of the same property, can't halt the pass and leave every later patch (including this manager's own event hook) uninstalled.
 
 ---
 
@@ -295,3 +297,9 @@ A singleton `BlockbenchPatchManager` instance is created on `window` the first t
 3. After each change, debounces a `updatePatches()` call (250 ms) that reverts all installed patches in reverse order, re-sorts by priority and dependency, then re-applies all enabled patches in the new order
 
 This ensures correct behavior even when multiple plugins with interdependent patches load and unload at runtime.
+
+### Composing overrides of the same property
+
+Two plugins may both `registerPropertyOverridePatch` the same `target` / `key` — usually with mutually-exclusive `getCondition`s (one per model format). The override applied later wraps the one applied earlier: when its condition doesn't match it reads the underlying value **live** through the layer below, so the earlier plugin's override still takes effect. The order the two plugins load in doesn't change the result.
+
+A getter-only override still installs a pass-through setter, so a plain `target[key] = value` from other code (or another plugin that overrides by assignment rather than this helper) doesn't throw against it.

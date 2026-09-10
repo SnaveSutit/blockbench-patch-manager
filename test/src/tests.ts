@@ -322,6 +322,42 @@ export const TESTS: TestCase[] = [
 			)
 		},
 	},
+	{
+		group: 'Errors',
+		name: 'updatePatches() skips a patch that throws on apply and still applies the rest',
+		fn: ctx => {
+			const throwerId = `${PLUGIN_ID}:resilient-thrower`
+			const thrower = registerPatch({
+				id: throwerId,
+				priority: 10,
+				apply: () => {
+					throw new Error('kaboom')
+				},
+				revert: () => {},
+			})
+			ctx.cleanup(() => {
+				try {
+					if (BlockbenchPatchManager.registered.get(throwerId) === thrower) {
+						BlockbenchPatchManager.removePatch(throwerId)
+					}
+				} catch (error) {
+					console.error(error)
+				}
+			})
+
+			// Lower priority → ordered after the thrower in the apply pass.
+			const after = createPatch(ctx, { name: 'resilient-after', priority: 0 })
+
+			BlockbenchPatchManager.updatePatches()
+
+			assert(!thrower.isApplied(), 'the throwing patch is left unapplied')
+			assert(after.handle.isApplied(), 'a patch after it in the pass still applied')
+			assert(
+				BlockbenchPatchManager.registered.get(EVENT_HOOK_ID)!.isApplied(),
+				'the built-in event hook (last in the pass) still applied'
+			)
+		},
+	},
 
 	// ─── Debounced updates ───────────────────────────────────────────────────
 	{
@@ -470,6 +506,93 @@ export const TESTS: TestCase[] = [
 			const restored = Object.getOwnPropertyDescriptor(target, 'hidden')!
 			assertEqual(restored.enumerable, false, 'restored descriptor keeps enumerable: false')
 			assertEqual(restored.value, 5, 'restored descriptor keeps the original value')
+		},
+	},
+	{
+		group: 'Property override',
+		name: 'stacked conditional overrides compose the same regardless of which registers first',
+		fn: () => {
+			const check = (firstId: string, secondId: string) => {
+				const target = { role: 'base' } as { role: string }
+				const active: Record<string, boolean> = { [firstId]: false, [secondId]: false }
+				const order = [firstId, secondId]
+
+				for (const name of order) {
+					registerPropertyOverridePatch({
+						id: `${PLUGIN_ID}:${name}`,
+						target,
+						key: 'role',
+						getCondition: () => active[name],
+						get: () => name,
+					})
+				}
+				const handles = order.map(
+					name => BlockbenchPatchManager.registered.get(`${PLUGIN_ID}:${name}`)!
+				)
+				try {
+					BlockbenchPatchManager.updatePatches()
+					assertEqual(target.role, 'base', `${firstId}|${secondId}: neither condition active`)
+
+					active[firstId] = true
+					assertEqual(
+						target.role,
+						firstId,
+						`${firstId}|${secondId}: the first-registered override still wins under the second`
+					)
+
+					active[firstId] = false
+					active[secondId] = true
+					assertEqual(
+						target.role,
+						secondId,
+						`${firstId}|${secondId}: the second-registered override wins when its condition matches`
+					)
+				} finally {
+					for (const handle of [...handles].reverse()) {
+						try {
+							if (handle.isApplied()) handle.revert()
+						} catch (error) {
+							console.error(error)
+						}
+						try {
+							BlockbenchPatchManager.removePatch(handle.id)
+						} catch (error) {
+							console.error(error)
+						}
+					}
+				}
+			}
+
+			check('alpha', 'beta')
+			check('beta', 'alpha')
+		},
+	},
+	{
+		group: 'Property override',
+		name: 'a getter-only override keeps a pass-through setter so a plain assignment does not throw',
+		fn: ctx => {
+			const target = { fn: () => 'original' } as { fn: () => string }
+			const id = `${PLUGIN_ID}:assign-through`
+			registerPropertyOverridePatch({
+				id,
+				target,
+				key: 'fn',
+				getCondition: () => false, // never use our override → always the underlying value
+				get: () => () => 'override',
+			})
+			trackHandle(ctx, BlockbenchPatchManager.registered.get(id)!)
+
+			BlockbenchPatchManager.updatePatches()
+			assertEqual(target.fn(), 'original', 'condition false → the underlying value is returned')
+
+			let threw = false
+			try {
+				target.fn = () => 'replaced'
+			} catch {
+				threw = true
+			}
+			assert(!threw, 'assigning to the getter-only override did not throw')
+			assertEqual(target.fn(), 'replaced', 'the assignment propagated to the underlying value')
 		},
 	},
 
