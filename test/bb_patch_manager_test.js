@@ -736,28 +736,56 @@
             }
           }
         }
+        /**
+         * Rebuilds {@link installOrder} from scratch: a priority-descending pass
+         * that's then topologically sorted so every dependency ends up before its
+         * dependent, however many hops that takes.
+         *
+         * This used to fix up an existing priority-sorted array in place by
+         * splicing a dependency to just before its dependent while iterating the
+         * same array with `for...of`. That let the live iterator's cursor skip
+         * past an element that had just been moved behind it, so a patch could
+         * come out ordered before one of its own transitive dependencies whenever
+         * more than one hop of repositioning was needed in a single pass — e.g. a
+         * three-patch dependency chain (A <- B <- C) with priorities that disagree
+         * with the dependency order. The dependent would then fail its
+         * `checkPatchDependencies()` check during `updatePatches()` and be skipped
+         * every pass thereafter. A DFS-based topological sort can't skip a node
+         * this way: a patch is only pushed to the output after every one of its
+         * dependencies has been recursively visited first.
+         */
         updatePatchApplicationOrder() {
-          this.installOrder.sort((a, b) => {
+          const priorityOrder = [...this.registered.keys()].sort((a, b) => {
             const patchA = this.registered.get(a);
             const patchB = this.registered.get(b);
             return patchB.priority - patchA.priority;
           });
-          for (const patchId of this.installOrder) {
+          const sorted = [];
+          const visited = /* @__PURE__ */ new Set();
+          const visiting = /* @__PURE__ */ new Set();
+          const visit = (patchId) => {
+            if (visited.has(patchId))
+              return;
             const patch = this.registered.get(patchId);
-            if (patch.dependencies === void 0)
-              continue;
-            for (const dependencyId of patch.dependencies) {
-              const dependencyIndex = this.installOrder.indexOf(dependencyId);
-              if (dependencyIndex === -1) {
+            if (!patch)
+              return;
+            if (visiting.has(patchId)) {
+              throw new Error(`Circular patch dependency detected involving '${patchId}'`);
+            }
+            visiting.add(patchId);
+            for (const dependencyId of patch.dependencies ?? []) {
+              if (!this.registered.has(dependencyId)) {
                 throw new Error(`Patch '${patchId}' depends on unknown patch '${dependencyId}'`);
               }
-              const patchIndex = this.installOrder.indexOf(patchId);
-              if (dependencyIndex > patchIndex) {
-                this.installOrder.splice(dependencyIndex, 1);
-                this.installOrder.splice(patchIndex, 0, dependencyId);
-              }
+              visit(dependencyId);
             }
-          }
+            visiting.delete(patchId);
+            visited.add(patchId);
+            sorted.push(patchId);
+          };
+          for (const patchId of priorityOrder)
+            visit(patchId);
+          this.installOrder = sorted;
         }
       };
       if (window.BlockbenchPatchManager == null) {
@@ -1080,6 +1108,33 @@
         assert(
           applies.indexOf("apply:dep-base") < applies.indexOf("apply:dep-main"),
           `dependency applied before dependent (order: ${applies.join(", ")})`
+        );
+      }
+    },
+    {
+      group: "Ordering",
+      name: "a transitive dependency chain applies in order despite priorities needing multiple reorder hops",
+      fn: (ctx) => {
+        const timeline = [];
+        createPatch(ctx, { name: "chain-base", priority: -100, timeline });
+        createPatch(ctx, {
+          name: "chain-mid",
+          priority: 0,
+          dependencies: [`${PLUGIN_ID}:chain-base`],
+          timeline
+        });
+        createPatch(ctx, {
+          name: "chain-top",
+          priority: 100,
+          dependencies: [`${PLUGIN_ID}:chain-mid`],
+          timeline
+        });
+        BlockbenchPatchManager.updatePatches();
+        const applies = timeline.filter((e) => e.startsWith("apply:"));
+        assertDeepEqual(
+          applies,
+          ["apply:chain-base", "apply:chain-mid", "apply:chain-top"],
+          `entire chain applied in dependency order (order: ${applies.join(", ")})`
         );
       }
     },

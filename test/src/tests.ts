@@ -181,6 +181,37 @@ export const TESTS: TestCase[] = [
 	},
 	{
 		group: 'Ordering',
+		name: 'a transitive dependency chain applies in order despite priorities needing multiple reorder hops',
+		fn: ctx => {
+			const timeline: string[] = []
+			// Registered in valid dependency order (base, then mid depending on
+			// base, then top depending on mid), but with priorities that put them
+			// in the exact opposite order — requiring the sort to move a
+			// dependency more than one hop past its dependent.
+			createPatch(ctx, { name: 'chain-base', priority: -100, timeline })
+			createPatch(ctx, {
+				name: 'chain-mid',
+				priority: 0,
+				dependencies: [`${PLUGIN_ID}:chain-base`],
+				timeline,
+			})
+			createPatch(ctx, {
+				name: 'chain-top',
+				priority: 100,
+				dependencies: [`${PLUGIN_ID}:chain-mid`],
+				timeline,
+			})
+			BlockbenchPatchManager.updatePatches()
+			const applies = timeline.filter(e => e.startsWith('apply:'))
+			assertDeepEqual(
+				applies,
+				['apply:chain-base', 'apply:chain-mid', 'apply:chain-top'],
+				`entire chain applied in dependency order (order: ${applies.join(', ')})`
+			)
+		},
+	},
+	{
+		group: 'Ordering',
 		name: 'patches revert in the reverse of their apply order',
 		fn: ctx => {
 			const timeline: string[] = []

@@ -326,30 +326,43 @@ class PatchManager implements Deletable {
 		}
 	}
 
+	/**
+	 * Rebuilds {@link installOrder}: priority-descending, then topologically
+	 * sorted so every dependency ends up before its dependent, any number of hops away.
+	 */
 	updatePatchApplicationOrder() {
-		this.installOrder.sort((a, b) => {
+		const priorityOrder = [...this.registered.keys()].sort((a, b) => {
 			const patchA = this.registered.get(a)!
 			const patchB = this.registered.get(b)!
 			return patchB.priority - patchA.priority
 		})
 
-		// Ensure dependencies are installed before the mod that depends on them
-		for (const patchId of this.installOrder) {
-			const patch = this.registered.get(patchId)!
-			if (patch.dependencies === undefined) continue
-			for (const dependencyId of patch.dependencies) {
-				const dependencyIndex = this.installOrder.indexOf(dependencyId)
-				if (dependencyIndex === -1) {
+		const sorted: string[] = []
+		const visited = new Set<string>()
+		const visiting = new Set<string>()
+
+		const visit = (patchId: string) => {
+			if (visited.has(patchId)) return
+			const patch = this.registered.get(patchId)
+			if (!patch) return
+			if (visiting.has(patchId)) {
+				throw new Error(`Circular patch dependency detected involving '${patchId}'`)
+			}
+			visiting.add(patchId)
+			for (const dependencyId of patch.dependencies ?? []) {
+				if (!this.registered.has(dependencyId)) {
 					throw new Error(`Patch '${patchId}' depends on unknown patch '${dependencyId}'`)
 				}
-				const patchIndex = this.installOrder.indexOf(patchId)
-				if (dependencyIndex > patchIndex) {
-					// Move the dependency before the patch
-					this.installOrder.splice(dependencyIndex, 1)
-					this.installOrder.splice(patchIndex, 0, dependencyId)
-				}
+				visit(dependencyId)
 			}
+			visiting.delete(patchId)
+			visited.add(patchId)
+			sorted.push(patchId)
 		}
+
+		for (const patchId of priorityOrder) visit(patchId)
+
+		this.installOrder = sorted
 	}
 }
 
