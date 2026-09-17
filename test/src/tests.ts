@@ -272,27 +272,43 @@ export const TESTS: TestCase[] = [
 	},
 	{
 		group: 'Registration',
-		name: 'registering a patch with an unknown dependency throws',
+		name: 'registering a patch with an unknown dependency does not throw, but the patch never applies',
 		fn: ctx => {
 			const id = `${PLUGIN_ID}:orphan-dep`
-			ctx.cleanup(() => {
-				try {
-					BlockbenchPatchManager.removePatch(id)
-				} catch {
-					/* may never have registered */
-				}
+			const handle = registerPatch({
+				id,
+				dependencies: [`${PLUGIN_ID}:ghost`],
+				apply: () => {},
+				revert: () => {},
 			})
-			assertThrows(
-				() =>
-					registerPatch({
-						id,
-						dependencies: [`${PLUGIN_ID}:ghost`],
-						apply: () => {},
-						revert: () => {},
-					}),
-				'registerPatch rejects an unknown dependency',
-				/depends on unknown patch/
-			)
+			trackHandle(ctx, handle)
+			BlockbenchPatchManager.updatePatches()
+			assert(!handle.isApplied(), 'patch with an unresolvable dependency stays unapplied')
+		},
+	},
+	{
+		group: 'Registration',
+		// Regression test: addPatch() used to sort (and throw) immediately, so a
+		// dependent registered before its dependency broke registration.
+		name: 'a patch registered before its dependency still applies once updatePatches() runs',
+		fn: ctx => {
+			const dependentId = `${PLUGIN_ID}:order-dependent`
+			const baseId = `${PLUGIN_ID}:order-base`
+
+			const dependent = registerPatch({
+				id: dependentId,
+				dependencies: [baseId],
+				apply: () => {},
+				revert: () => {},
+			})
+			trackHandle(ctx, dependent)
+
+			const base = registerPatch({ id: baseId, apply: () => {}, revert: () => {} })
+			trackHandle(ctx, base)
+
+			BlockbenchPatchManager.updatePatches()
+			assert(base.isApplied(), 'the dependency applied')
+			assert(dependent.isApplied(), 'the dependent applied once its dependency was registered')
 		},
 	},
 	{

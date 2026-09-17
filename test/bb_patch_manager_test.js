@@ -399,7 +399,7 @@
     "package.json"(exports, module) {
       module.exports = {
         name: "blockbench-patch-manager",
-        version: "1.3.0",
+        version: "1.3.1",
         author: {
           name: "SnaveSutit",
           email: "snavesutit@gmail.com",
@@ -494,7 +494,6 @@
             manager.registered.set(patchId, patch);
             manager.installOrder.push(patchId);
           }
-          manager.updatePatchApplicationOrder();
           manager.runPatchUpdate();
           return manager;
         }
@@ -619,7 +618,6 @@
           }
           this.registered.set(patch.id, patch);
           this.installOrder.push(patch.id);
-          this.updatePatchApplicationOrder();
         }
         removePatch(patchId) {
           const patch = this.registered.get(patchId);
@@ -663,6 +661,14 @@
         updatePatches() {
           (0, log_1.prettyGroupCollapsed)({ "Updating Patches...": "color: #aaaaaa;" });
           try {
+            try {
+              this.updatePatchApplicationOrder();
+            } catch (error) {
+              (0, log_1.prettyError)({
+                [`Failed to compute patch application order; falling back to registration order.`]: "color: #ff5555;",
+                [String(error)]: "color: #ff5555;"
+              });
+            }
             (0, log_1.prettyLog)({ "Reverting patches...": "color: #ff5555; font-weight: bold;" });
             for (const patchId of this.installOrder.slice().reverse()) {
               const patch = this.registered.get(patchId);
@@ -737,22 +743,8 @@
           }
         }
         /**
-         * Rebuilds {@link installOrder} from scratch: a priority-descending pass
-         * that's then topologically sorted so every dependency ends up before its
-         * dependent, however many hops that takes.
-         *
-         * This used to fix up an existing priority-sorted array in place by
-         * splicing a dependency to just before its dependent while iterating the
-         * same array with `for...of`. That let the live iterator's cursor skip
-         * past an element that had just been moved behind it, so a patch could
-         * come out ordered before one of its own transitive dependencies whenever
-         * more than one hop of repositioning was needed in a single pass — e.g. a
-         * three-patch dependency chain (A <- B <- C) with priorities that disagree
-         * with the dependency order. The dependent would then fail its
-         * `checkPatchDependencies()` check during `updatePatches()` and be skipped
-         * every pass thereafter. A DFS-based topological sort can't skip a node
-         * this way: a patch is only pushed to the output after every one of its
-         * dependencies has been recursively visited first.
+         * Rebuilds {@link installOrder}: priority-descending, then topologically
+         * sorted so every dependency ends up before its dependent, any number of hops away.
          */
         updatePatchApplicationOrder() {
           const priorityOrder = [...this.registered.keys()].sort((a, b) => {
@@ -1200,27 +1192,46 @@
     },
     {
       group: "Registration",
-      name: "registering a patch with an unknown dependency throws",
+      name: "registering a patch with an unknown dependency does not throw, but the patch never applies",
       fn: (ctx) => {
         const id = `${PLUGIN_ID}:orphan-dep`;
-        ctx.cleanup(() => {
-          try {
-            BlockbenchPatchManager.removePatch(id);
-          } catch {
+        const handle = (0, import_dist.registerPatch)({
+          id,
+          dependencies: [`${PLUGIN_ID}:ghost`],
+          apply: () => {
+          },
+          revert: () => {
           }
         });
-        assertThrows(
-          () => (0, import_dist.registerPatch)({
-            id,
-            dependencies: [`${PLUGIN_ID}:ghost`],
-            apply: () => {
-            },
-            revert: () => {
-            }
-          }),
-          "registerPatch rejects an unknown dependency",
-          /depends on unknown patch/
-        );
+        trackHandle(ctx, handle);
+        BlockbenchPatchManager.updatePatches();
+        assert(!handle.isApplied(), "patch with an unresolvable dependency stays unapplied");
+      }
+    },
+    {
+      group: "Registration",
+      // Regression test: addPatch() used to sort (and throw) immediately, so a
+      // dependent registered before its dependency broke registration.
+      name: "a patch registered before its dependency still applies once updatePatches() runs",
+      fn: (ctx) => {
+        const dependentId = `${PLUGIN_ID}:order-dependent`;
+        const baseId = `${PLUGIN_ID}:order-base`;
+        const dependent = (0, import_dist.registerPatch)({
+          id: dependentId,
+          dependencies: [baseId],
+          apply: () => {
+          },
+          revert: () => {
+          }
+        });
+        trackHandle(ctx, dependent);
+        const base = (0, import_dist.registerPatch)({ id: baseId, apply: () => {
+        }, revert: () => {
+        } });
+        trackHandle(ctx, base);
+        BlockbenchPatchManager.updatePatches();
+        assert(base.isApplied(), "the dependency applied");
+        assert(dependent.isApplied(), "the dependent applied once its dependency was registered");
       }
     },
     {

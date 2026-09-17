@@ -52,7 +52,6 @@ class PatchManager implements Deletable {
 			manager.installOrder.push(patchId)
 		}
 
-		manager.updatePatchApplicationOrder()
 		manager.runPatchUpdate()
 		return manager
 	}
@@ -195,7 +194,6 @@ class PatchManager implements Deletable {
 
 		this.registered.set(patch.id, patch)
 		this.installOrder.push(patch.id)
-		this.updatePatchApplicationOrder()
 	}
 
 	removePatch(patchId: string) {
@@ -245,6 +243,16 @@ class PatchManager implements Deletable {
 	updatePatches() {
 		prettyGroupCollapsed({ 'Updating Patches...': 'color: #aaaaaa;' })
 		try {
+			try {
+				this.updatePatchApplicationOrder()
+			} catch (error) {
+				prettyError({
+					[`Failed to compute patch application order; falling back to registration order.`]:
+						'color: #ff5555;',
+					[String(error)]: 'color: #ff5555;',
+				})
+			}
+
 			prettyLog({ 'Reverting patches...': 'color: #ff5555; font-weight: bold;' })
 			for (const patchId of this.installOrder.slice().reverse()) {
 				const patch = this.registered.get(patchId)!
