@@ -38,7 +38,10 @@ class PatchManager implements Deletable {
 	static upgrade(oldManager: PatchManager) {
 		// delete() detaches the old manager and reverts its event hook. The other
 		// patches it owns stay applied until runPatchUpdate() below cycles them.
-		oldManager.delete()
+		// This version's delete() runs on the old instance, as older versions revert
+		// the event hook without checking it was applied, which throws when their
+		// first update hasn't run yet.
+		PatchManager.prototype.delete.call(oldManager)
 
 		const manager = new PatchManager()
 

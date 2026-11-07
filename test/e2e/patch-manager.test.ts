@@ -30,6 +30,7 @@ const GROUPS = [
 	'Property override',
 	'Accessors',
 	'Project patches',
+	'Upgrade',
 ] as const
 
 let results: TestResult[] = []

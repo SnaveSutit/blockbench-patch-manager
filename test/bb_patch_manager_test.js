@@ -399,7 +399,7 @@
     "package.json"(exports, module) {
       module.exports = {
         name: "blockbench-patch-manager",
-        version: "1.3.1",
+        version: "1.3.2",
         author: {
           name: "SnaveSutit",
           email: "snavesutit@gmail.com",
@@ -483,7 +483,7 @@
         pendingUpdate = false;
         updatingPatches = false;
         static upgrade(oldManager) {
-          oldManager.delete();
+          _PatchManager.prototype.delete.call(oldManager);
           const manager = new _PatchManager();
           for (const patchId of oldManager.installOrder) {
             if (patchId === EVENT_HOOK_ID2)
@@ -1622,6 +1622,48 @@
         assertEqual(applied, 1, "apply ran when a project was selected");
         Blockbench.dispatchEvent("unselect_project", {});
         assertEqual(reverted, 1, "revert ran when the project was deselected");
+      }
+    },
+    // ─── Upgrade ─────────────────────────────────────────────────────────────
+    {
+      group: "Upgrade",
+      name: "upgrading a manager whose event hook was never applied does not throw",
+      fn: () => {
+        const current = BlockbenchPatchManager;
+        const hook = {
+          id: EVENT_HOOK_ID,
+          enabled: true,
+          isApplied: () => false,
+          revert: () => {
+            throw new Error(`Attempted to revert '${EVENT_HOOK_ID}' before it was applied.`);
+          }
+        };
+        const old = {
+          version: "1.1.0",
+          registered: /* @__PURE__ */ new Map([[EVENT_HOOK_ID, hook]]),
+          installOrder: [EVENT_HOOK_ID],
+          onLoadedPlugin: () => {
+          },
+          onUnloadedPlugin: () => {
+          },
+          delete() {
+            hook.revert();
+          }
+        };
+        const managerClass = current.constructor;
+        let upgraded;
+        try {
+          upgraded = managerClass.upgrade(old);
+          assert(upgraded.registered.has(EVENT_HOOK_ID), "the new manager has its own event hook");
+          assert(!old.registered.has(EVENT_HOOK_ID), "the old event hook was dropped");
+        } finally {
+          if (upgraded) {
+            const newHook = upgraded.registered.get(EVENT_HOOK_ID);
+            upgraded.delete();
+            if (newHook?.isApplied()) newHook.revert();
+          }
+          window.BlockbenchPatchManager = current;
+        }
       }
     }
   ];
